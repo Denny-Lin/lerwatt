@@ -1,6 +1,6 @@
 # Lerwatt design
 
-Status: **Phase 0 design, 2026-11-01.** Nothing here is implemented. Source references point to the [Linux v7.3 tag](https://github.com/torvalds/linux/tree/v7.3) and to [sched-ext/scx](https://github.com/sched-ext/scx) as of 2026-10-30.
+Status: **2026-11-01.** The contract layout (section 3), the rule-based controller (section 4) and the safety envelope (section 5) are implemented and run against the simulator ([SIMULATION.md](SIMULATION.md)). Learning, Lertick's side of the contract and any hardware run are not done yet. Source references point to the [Linux v7.3 tag](https://github.com/torvalds/linux/tree/v7.3) and to [sched-ext/scx](https://github.com/sched-ext/scx) as of 2026-10-30.
 
 Labels: **[upstream]** = present in Linux v7.3; **[RFC]** = posted to a mailing list, not merged; **[proposal]** = Lerwatt design, not yet tested.
 
@@ -62,7 +62,7 @@ Coordination follows dual decomposition. Lertick minimizes latency cost plus `en
 
 **Lertick side.** Keep the existing per-task burst predictor. Add capacity-aware placement and a per-CPU `cpuperf` target computed from predicted demand, the contract ceiling and the energy price. The BPF verifier forbids floating point, so all arithmetic stays fixed-point, as Lertick's Q16 model already is.
 
-**Lerwatt, Phase 2 (no learning).** A budget controller with hysteresis: a thermal model fitted offline (first-order RC per cluster), an Energy-Model power estimate corrected by measured energy, and a PI loop on the price. This is the baseline any learned version must beat.
+**Lerwatt, rule-based (implemented in `src/controller.c`).** A budget controller with hysteresis: a thermal model fitted offline (first-order RC per cluster), an Energy-Model power estimate corrected by measured energy, and a PI loop on the price. This is the baseline any learned version must beat.
 
 **Lerwatt, Phase 3 (learning).** A contextual bandit chooses among a small set of safe ceiling and idle-limit profiles per period; the context is temperature, headroom and Lertick's forecast. A model-predictive variant plans over the learned thermal model. Two independent reinforcement-learning agents are not planned: they face a non-stationary environment created by each other. If reinforcement learning is used later, it will be trained centrally with a shared reward and executed separately, with the contract fields as the only shared state.
 
@@ -70,7 +70,7 @@ Coordination follows dual decomposition. Lertick minimizes latency cost plus `en
 
 ## 5. Safety envelope and fallback [proposal]
 
-1. Allowed writes: `scaling_min_freq`, `scaling_max_freq`, `energy_performance_preference`, `power/pm_qos_resume_latency_us`, `cpuidle/stateN/disable`, and the contract map. Nothing else.
+1. Allowed writes: `scaling_min_freq`, `scaling_max_freq`, `energy_performance_preference`, `power/pm_qos_resume_latency_us`, `cpuidle/stateN/disable`, and the contract map. Nothing else. The current code uses the first two cpufreq knobs, the resume-latency knob and the contract; it never loosens a limit it found in place.
 2. Every written value is clamped to the hardware range and to a configured minimum performance floor.
 3. Original values are saved at start and restored on exit, on signals, and by a service-manager stop hook if the daemon dies.
 4. If `valid_until_ns` expires, Lertick reverts to its own defaults; if Lertick unloads, schedutil returns to fair-class utilization automatically.
