@@ -21,7 +21,7 @@ Lerwatt 是實驗性的 Linux 電源管理器，設計目標是學習 CPU 頻率
 
 VM 沒有真實的 cpufreq、cpuidle、溫度感測器、Energy Model 或大小核。在接上 RK3588 板子之前，由 `lerwatt-sim` 透過與真實板子相同的 kernel 檔案提供這些介面，所以 `lerwattd` 在兩邊都不用改，接上真實硬體時會自己切換。模擬結果只能證明控制迴路的行為；省電的結論必須靠板子與外接功率計。哪些部分是模擬的，見 [docs/SIMULATION.md](docs/SIMULATION.md)。
 
-實驗性的學習版策略（`lerwattd --policy mpc`）會在執行中線上擬合板子的溫度模型，再用它規劃頻率上限。在模擬中它是安全的，但還沒有比規則版好，見 [docs/SIMULATION.md](docs/SIMULATION.md)。
+實驗性的學習版策略（`lerwattd --policy mpc`）會在執行中線上擬合兩節點溫度模型，再用它規劃頻率上限。在模擬中它是安全的，頻率上限的調整次數通常也比規則版少，但在 burst 負載下完成的工作量較少，所以預設仍是規則版，見 [docs/SIMULATION.md](docs/SIMULATION.md)。
 
 **學習帶來的優勢尚未被證明。** 在宣稱任何效果之前，Lerwatt 必須和 EAS + schedutil + power-allocator 熱 governor，以及 [scx_lavd](https://github.com/sched-ext/scx/tree/main/scheds/rust/scx_lavd) 的省電模式比較。
 

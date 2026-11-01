@@ -50,7 +50,15 @@ struct lw_ctl_params {
 	double lat_crit_threshold;	/* 0..1 */
 	enum lw_ctl_policy policy;
 	double mpc_horizon_s;		/* look-ahead of the predictive ceiling */
-	double mpc_margin_c;		/* predicted peak stays this far below the soft limit */
+	double mpc_over_soft_c;		/* line the plan holds, above the soft limit */
+	double mpc_margin_c;		/* a climb must predict this far under the limit */
+	double mpc_peak_memory_s;	/* how long a burst's load stays in the plan */
+	double mpc_hold_s;		/* a climb must stay under the limit this long */
+	double mpc_up_wait_max_s;	/* longest wait after climbs that failed */
+	double mpc_load_filter_s;	/* averages the load the plan assumes, over bursts */
+	double mpc_package_filter_s;	/* TSADC codes are coarse */
+	double mpc_raw_gap_c;		/* an unfiltered reading may pass the line by this much */
+	double mpc_peak_filter_s;	/* a recent peak fades this slowly: longer than bursts */
 	uint32_t mpc_up_step_ms;	/* min time between predictive increases */
 };
 
@@ -65,6 +73,7 @@ struct lw_ctl_in {
 	int32_t deep_idle_latency_us;	/* deepest idle state's latency, -1 if none */
 	double lat_crit;		/* 0..1 from Lertick, <0 when no contract */
 	double other_power_w;		/* estimated CPU power of the other clusters */
+	int32_t package_mc;		/* package zone, INT32_MIN when there is none */
 };
 
 struct lw_ctl_state {
@@ -83,6 +92,10 @@ struct lw_ctl_state {
 	double mpc_busy;		/* slow load average for planning */
 	double mpc_work_khz;		/* slow average of busy x frequency */
 	double mpc_other;		/* slow average of the other clusters' power */
+	double mpc_peak_busy;		/* decaying peak of busy: bursts hit the ceiling */
+	double mpc_up_wait_s;		/* wait before a climb, doubled by each failed one */
+	double pkg_c;			/* filtered package temperature */
+	double mpc_peak_c;		/* recent peak of the filtered zone temperature */
 };
 
 struct lw_ctl_out {

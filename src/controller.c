@@ -20,8 +20,16 @@ void lw_ctl_default_params(struct lw_ctl_params *p, int32_t lowest_passive_mc)
 	p->price_ramp_c = 5.0;
 	p->lat_crit_threshold = 0.5;
 	p->policy = LW_POLICY_RULE;
-	p->mpc_horizon_s = 20.0;
-	p->mpc_margin_c = 1.0;
+	p->mpc_horizon_s = 5.0;
+	p->mpc_over_soft_c = 2.0;
+	p->mpc_margin_c = 0.5;
+	p->mpc_peak_memory_s = 30.0;
+	p->mpc_hold_s = 120.0;
+	p->mpc_up_wait_max_s = 320.0;
+	p->mpc_load_filter_s = 30.0;
+	p->mpc_package_filter_s = 2.0;
+	p->mpc_raw_gap_c = 1.0;
+	p->mpc_peak_filter_s = 10.0;
 	p->mpc_up_step_ms = 10000;
 }
 
@@ -52,13 +60,55 @@ static uint32_t perf_of(const struct lw_ctl_in *in, int i)
 	return (uint32_t)((uint64_t)in->capacity * in->opps[i].khz / in->opps[in->nopps - 1].khz);
 }
 
-/*
- * Power the cluster would draw at OPP i. A saturated cluster's demand above
- * its ceiling is unknown, so assume it would use every cycle it is given.
- */
-static double planned_power_w(const struct lw_ctl_in *in, double slow_busy, int i)
+/* A cluster that saturates, at least in bursts, draws all it is given while busy. */
+static bool plan_saturated(const struct lw_ctl_state *st)
 {
-	return slow_busy >= 0.9 ? full_power_w(in, i) : lw_ctl_est_power_w(in, i);
+	return st->mpc_peak_busy >= 0.9;
+}
+
+/* Mean power at OPP i: what heats the package. */
+static double plan_mean_w(const struct lw_ctl_in *in, const struct lw_ctl_state *st, int i)
+{
+	struct lw_ctl_in w = *in;
+
+	if (plan_saturated(st))
+		return st->mpc_busy * full_power_w(in, i);
+	/*
+	 * busy_mean x cur_khz is the work done; average it rather than busy
+	 * alone, which swings with the frequency schedutil picks.
+	 */
+	w.busy_mean = st->mpc_work_khz / in->cur_khz;
+	return lw_ctl_est_power_w(&w, i);
+}
+
+/* Power while busy at OPP i: what the hot spot follows. */
+static double plan_peak_w(const struct lw_ctl_in *in, const struct lw_ctl_state *st, int i)
+{
+	return plan_saturated(st) ? full_power_w(in, i) : plan_mean_w(in, st, i);
+}
+
+/*
+ * Hottest the cluster's zone gets within horizon_s at OPP i: the recent peak,
+ * moved by what the model says changes. Working from the measured peak cancels
+ * any bias in the model's absolute temperatures.
+ */
+static double plan_temp_c(const struct lw_ctl_in *in, const struct lw_ctl_state *st, int i,
+			  double horizon_s)
+{
+	double total = plan_mean_w(in, st, i) + st->mpc_other;
+
+	return st->mpc_peak_c + lw_tm_package(&st->tm, st->pkg_c, total, horizon_s) - st->pkg_c +
+	       lw_tm_peak_offset(&st->tm, plan_peak_w(in, st, i)) -
+	       lw_tm_peak_offset(&st->tm, plan_peak_w(in, st, st->ceil_idx));
+}
+
+/* Change the ceiling, and expect the peak to move with the hot spot's offset. */
+static void plan_move(const struct lw_ctl_in *in, struct lw_ctl_state *st, int i)
+{
+	st->mpc_peak_c += lw_tm_peak_offset(&st->tm, plan_peak_w(in, st, i)) -
+			  lw_tm_peak_offset(&st->tm, plan_peak_w(in, st, st->ceil_idx));
+	st->ceil_idx = i;
+	st->ceiling_changes++;
 }
 
 static int lowest_idx_at_least(const struct lw_ctl_in *in, double khz)
@@ -140,66 +190,77 @@ void lw_ctl_step(const struct lw_ctl_params *p, const struct lw_ctl_in *in,
 		}
 	}
 
-	if (p->policy == LW_POLICY_MPC) {
-		double t_c = st->temp_f_mc / 1000.0, limit = p->soft_limit_mc / 1000.0 - p->mpc_margin_c;
+	if (p->policy == LW_POLICY_MPC && in->package_mc != INT32_MIN) {
+		double limit = p->soft_limit_mc / 1000.0 + p->mpc_over_soft_c;
 		bool down_ok = now_ns - st->last_down_ns >= (uint64_t)p->down_step_ms * 1000000ull;
-		bool up_ok = now_ns - st->last_up_ns >= (uint64_t)p->mpc_up_step_ms * 1000000ull &&
-			     now_ns - st->last_down_ns >= (uint64_t)p->mpc_up_step_ms * 1000000ull;
+		bool up_ok;
+		double temp_c, slow = clampd(dt_s / p->mpc_load_filter_s, 0.0, 1.0);
 
-		lw_tm_observe(&st->tm, t_c, out->est_power_w, in->other_power_w, dt_s);
-		/* Plan on load averaged over bursts, as the rule's slow filter does. */
 		if (!st->mpc_busy_init) {
-			st->mpc_busy = in->busy_mean;
+			st->mpc_busy = st->mpc_peak_busy = in->busy_mean;
 			st->mpc_work_khz = in->busy_mean * in->cur_khz;
 			st->mpc_other = in->other_power_w;
+			st->pkg_c = in->package_mc / 1000.0;
+			st->mpc_peak_c = st->temp_f_mc / 1000.0;
+			st->mpc_up_wait_s = p->mpc_up_step_ms / 1000.0;
 			st->mpc_busy_init = true;
 		}
-		st->mpc_busy += (in->busy_mean - st->mpc_busy) *
-				clampd(dt_s / p->temp_slow_filter_s, 0.0, 1.0);
-		st->mpc_work_khz += (in->busy_mean * in->cur_khz - st->mpc_work_khz) *
-				    clampd(dt_s / p->temp_slow_filter_s, 0.0, 1.0);
-		st->mpc_other += (in->other_power_w - st->mpc_other) *
-				 clampd(dt_s / p->temp_slow_filter_s, 0.0, 1.0);
+		up_ok = now_ns - st->last_up_ns >= (uint64_t)(st->mpc_up_wait_s * 1e9) &&
+			now_ns - st->last_down_ns >= (uint64_t)(st->mpc_up_wait_s * 1e9);
+		st->pkg_c += (in->package_mc / 1000.0 - st->pkg_c) *
+			     clampd(dt_s / p->mpc_package_filter_s, 0.0, 1.0);
+		/* A burst's raw peak outruns the filter: it counts, less the gap. */
+		temp_c = fmax(st->temp_f_mc, in->temp_mc - p->mpc_raw_gap_c * 1000.0) / 1000.0;
+		st->mpc_peak_c = fmax(temp_c, st->mpc_peak_c + (temp_c - st->mpc_peak_c) *
+				      clampd(dt_s / p->mpc_peak_filter_s, 0.0, 1.0));
+		lw_tm_observe(&st->tm, st->temp_f_mc / 1000.0, in->package_mc / 1000.0, out->est_power_w,
+			      in->other_power_w, dt_s);
+		/* Plan on load averaged over bursts, as the rule's slow filter does. */
+		st->mpc_busy += (in->busy_mean - st->mpc_busy) * slow;
+		st->mpc_work_khz += (in->busy_mean * in->cur_khz - st->mpc_work_khz) * slow;
+		st->mpc_other += (in->other_power_w - st->mpc_other) * slow;
+		st->mpc_peak_busy = fmax(in->busy_mean, st->mpc_peak_busy *
+					 exp(-dt_s / p->mpc_peak_memory_s));
 		out->model_ready = lw_tm_ready(&st->tm);
 		if (out->model_ready) {
-			struct lw_ctl_in plan_in = *in;
-			double pred, t_plan = st->temp_s_mc / 1000.0;
+			double pred = plan_temp_c(in, st, st->ceil_idx, p->mpc_horizon_s);
+			bool over = temp_c > limit;
+			/* The zone filter still holds the heat of the last step down. */
+			bool settled = now_ns - st->last_down_ns >=
+				       (uint64_t)(3 * p->temp_filter_s * 1e9);
 
-			/*
-			 * busy_mean x cur_khz is the work done; average it rather than
-			 * busy alone, which swings with the frequency schedutil picks.
-			 */
-			plan_in.busy_mean = st->mpc_work_khz / in->cur_khz;
-			plan_in.other_power_w = st->mpc_other;
-			/* Bursts swing the hot spot; plan from the slow temperature. */
-			pred = lw_tm_predict(&st->tm, t_plan, planned_power_w(&plan_in, st->mpc_busy, st->ceil_idx),
-					     plan_in.other_power_w, p->mpc_horizon_s);
 			out->predicted_c = pred;
 			/*
 			 * Down as soon as the current ceiling is predicted to cross the
-			 * limit within the horizon, to the highest ceiling that is not.
-			 * Up one OPP only when the next one is sustainable: its steady
-			 * state stays under the limit. The gap between the two tests is
-			 * the hysteresis that keeps discrete OPPs from hunting.
+			 * limit within the horizon, to the highest ceiling that is not,
+			 * one OPP at a time if none is. Up one OPP only when the next
+			 * one would stay under the limit for mpc_hold_s: the package's
+			 * heat capacity pays for time above the sustainable frequency,
+			 * and the hold is what keeps discrete OPPs from hunting.
 			 */
-			if ((pred > limit || he < 0) && down_ok && st->ceil_idx > min_idx) {
-				int plan = min_idx;
+			if ((pred > limit || (over && settled)) && down_ok && st->ceil_idx > min_idx) {
+				int plan = st->ceil_idx - 1;
 
-				for (int i = st->ceil_idx - 1; i >= min_idx; i--)
-					if (lw_tm_predict(&st->tm, t_plan, planned_power_w(&plan_in, st->mpc_busy, i),
-							  plan_in.other_power_w, p->mpc_horizon_s) <= limit) {
+				/*
+				 * Down soon after a climb means the plan was wrong for
+				 * this load: wait longer before the next one.
+				 */
+				st->mpc_up_wait_s = now_ns - st->last_up_ns < (uint64_t)(p->mpc_hold_s * 1e9) ?
+						    fmin(st->mpc_up_wait_s * 2, p->mpc_up_wait_max_s) :
+						    p->mpc_up_step_ms / 1000.0;
+
+				for (int i = plan; i >= min_idx; i--)
+					if (plan_temp_c(in, st, i, p->mpc_horizon_s) <= limit) {
 						plan = i;
 						break;
 					}
-				st->ceil_idx = plan;
+				plan_move(in, st, plan);
 				st->last_down_ns = now_ns;
-				st->ceiling_changes++;
-			} else if (st->ceil_idx < top && up_ok && h > p->deadband_c && cool_slow &&
-				   lw_tm_steady(&st->tm, planned_power_w(&plan_in, st->mpc_busy, st->ceil_idx + 1),
-						plan_in.other_power_w) <= limit) {
-				st->ceil_idx++;
+			} else if (st->ceil_idx < top && up_ok && !over &&
+				   plan_temp_c(in, st, st->ceil_idx + 1, p->mpc_hold_s) <=
+				   limit - p->mpc_margin_c) {
+				plan_move(in, st, st->ceil_idx + 1);
 				st->last_up_ns = now_ns;
-				st->ceiling_changes++;
 			}
 			st->mpc_periods++;
 			goto priced;

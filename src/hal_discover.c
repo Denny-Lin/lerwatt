@@ -301,6 +301,7 @@ static void discover_zones(struct lw_system *sys)
 	struct dirent *e;
 	DIR *d;
 
+	sys->package_zone = -1;
 	lw_path(sys, path, sizeof(path), "/sys/class/thermal");
 	d = opendir(path);
 	if (!d)
@@ -347,6 +348,8 @@ static void discover_zones(struct lw_system *sys)
 			if (pol >= 0 && sys->policies[pol].zone < 0)
 				sys->policies[pol].zone = sys->nzones;
 		}
+		if (sys->package_zone < 0 && (strstr(z->type, "package") || strstr(z->type, "soc")))
+			sys->package_zone = sys->nzones;
 		sys->nzones++;
 	}
 	closedir(d);
@@ -400,6 +403,7 @@ void lw_describe(const struct lw_system *sys, FILE *out)
 			p->opps[0].khz, p->opps[p->nopps - 1].khz, p->have_em ? "yes" : "no",
 			p->zone >= 0 ? sys->zones[p->zone].type : "(hottest)", p->nidle);
 	}
-	fprintf(out, "lerwatt:   %d thermal zones, meter %s\n", sys->nzones,
+	fprintf(out, "lerwatt:   %d thermal zones, package %s, meter %s\n", sys->nzones,
+		sys->package_zone >= 0 ? sys->zones[sys->package_zone].type : "(none)",
 		sys->meter_path[0] ? sys->meter_name : "none (Energy Model estimate)");
 }
