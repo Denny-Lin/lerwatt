@@ -14,7 +14,7 @@ LDLIBS  += -lm
 BUILD   := build
 
 HAL_SRCS := src/hal_fs.c src/hal_discover.c src/hal_sample.c src/hal_actuate.c
-CTL_SRCS := src/controller.c src/learn.c
+CTL_SRCS := src/controller.c src/learn.c src/forecast.c
 D_SRCS   := $(HAL_SRCS) $(CTL_SRCS) src/contract.c src/lerwattd.c
 SIM_SRCS := sim/platform_rk3588.c sim/model.c sim/abi.c sim/load.c src/contract.c sim/lerwatt_sim.c
 
@@ -38,16 +38,20 @@ $(BUILD)/test_closed_loop: tests/test_closed_loop.c sim/platform_rk3588.c sim/mo
 $(BUILD)/test_learn: tests/test_learn.c src/learn.c include/lerwatt/learn.h | $(BUILD)
 	$(CC) $(CFLAGS) -o $@ tests/test_learn.c src/learn.c $(LDLIBS)
 
-$(BUILD)/test_forecast: tests/test_forecast.c sim/platform_rk3588.c sim/model.c src/learn.c include/lerwatt/learn.h sim/sim.h | $(BUILD)
-	$(CC) $(CFLAGS) -Isim -o $@ tests/test_forecast.c sim/platform_rk3588.c sim/model.c src/learn.c $(LDLIBS)
+$(BUILD)/test_forecast: tests/test_forecast.c sim/platform_rk3588.c sim/model.c src/learn.c src/forecast.c include/lerwatt/learn.h include/lerwatt/forecast.h sim/sim.h | $(BUILD)
+	$(CC) $(CFLAGS) -Isim -o $@ tests/test_forecast.c sim/platform_rk3588.c sim/model.c src/learn.c src/forecast.c $(LDLIBS)
+
+$(BUILD)/test_forecast_feedback: tests/test_forecast_feedback.c src/forecast.c include/lerwatt/forecast.h | $(BUILD)
+	$(CC) $(CFLAGS) -o $@ tests/test_forecast_feedback.c src/forecast.c $(LDLIBS)
 
 $(BUILD)/test_controller: tests/test_controller.c $(CTL_SRCS) $(wildcard include/lerwatt/*.h) | $(BUILD)
 	$(CC) $(CFLAGS) -o $@ tests/test_controller.c $(CTL_SRCS) $(LDLIBS)
 
-test: $(BUILD)/test_model $(BUILD)/test_learn $(BUILD)/test_forecast $(BUILD)/test_controller $(BUILD)/test_closed_loop
+test: $(BUILD)/test_model $(BUILD)/test_learn $(BUILD)/test_forecast $(BUILD)/test_forecast_feedback $(BUILD)/test_controller $(BUILD)/test_closed_loop
 	$(BUILD)/test_model
 	$(BUILD)/test_learn
 	$(BUILD)/test_forecast
+	$(BUILD)/test_forecast_feedback
 	$(BUILD)/test_controller
 	$(BUILD)/test_closed_loop
 	$(BUILD)/test_closed_loop --cross-cluster

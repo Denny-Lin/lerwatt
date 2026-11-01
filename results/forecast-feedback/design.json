@@ -1,0 +1,31 @@
+{
+  "baseline": "7599b9944472d1a73ef4c64af3b16b80628fa967",
+  "parameters": {
+    "learning_rate": "100000000 / (5000000000 + 100000000)",
+    "squared_noise_floor_c2": 0.25,
+    "score_memory_s": 30,
+    "horizon_s": 5,
+    "queue_cadence_s": 0.1,
+    "max_label_lateness_s": 0.25
+  },
+  "development": "original six traces plus six new development patterns already inspected",
+  "reserved_validation": "eight cases selected by test_forecast --validation; no scores inspected before this manifest",
+  "source_sha256": {
+    "src/forecast.c": "21265a764056780555e32f03de4f4d2db0a82ed16557ec5e855b1ef7405c815e",
+    "include/lerwatt/forecast.h": "76ac19da65bfdec064cbcfbf8f43a58a835ebba885a6e8d1d2aae9c7bfe6bb80",
+    "tests/test_forecast.c": "2c870f159b3258c82586bdb2644174088ea7e5a144e4599793a1942cfae7871d"
+  },
+  "post_validation_reporting": "Added all-window coverage/error counters; matched-window predictions and metrics remain exactly equal to the pre-addition output.",
+  "replication_plan": {
+    "ids": [
+      1,
+      2,
+      3,
+      4,
+      5
+    ],
+    "seed_transform": "base_seed XOR (replicate * 0x9e3779b97f4a7c15) modulo 2^64",
+    "status": "chosen before inspecting replicate scores",
+    "profiles": "same eight reserved validation profiles; replicates estimate sensitivity, not eight additional workload families"
+  }
+}

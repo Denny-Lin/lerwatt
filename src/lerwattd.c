@@ -286,14 +286,22 @@ int main(int argc, char **argv)
 			if (tel)
 				fprintf(tel, "%s{\"id\":%d,\"temp_c\":%.1f,\"busy\":%.3f,\"cur_mhz\":%u,"
 					"\"ceil_mhz\":%u,\"budget_w\":%.3f,\"est_w\":%.3f,\"price\":%u,"
-					"\"floor_mhz\":%u,\"em\":%s,\"model\":%s,\"joint\":%s,\"pred_c\":%.1f,\"forecast_c\":%.1f}",
+					"\"floor_mhz\":%u,\"em\":%s,\"model\":%s,\"joint\":%s,\"pred_c\":%.1f,\"forecast_c\":%.1f,"
+					"\"forecast_source\":\"%s\",\"forecast_labels\":%llu,\"forecast_dropped\":%llu,\"forecast_weights\":[%.5f,%.5f,%.5f]}",
 					i ? "," : "", i, in.temp_mc == INT32_MIN ? -1.0 : in.temp_mc / 1000.0,
 					in.busy_mean, in.cur_khz / 1000, o.ceiling_khz / 1000, o.budget_w,
 					o.est_power_w, o.price_milli, o.floor_khz / 1000,
 					p->have_em ? "true" : "false", o.model_ready ? "true" : "false",
 					o.joint_active ? "true" : "false",
 					isnan(o.predicted_c) ? -1.0 : o.predicted_c,
-					isnan(o.forecast_c) ? -1.0 : o.forecast_c);
+					isnan(o.forecast_c) ? -1.0 : o.forecast_c,
+					o.forecast_source == LW_FORECAST_PERSISTENCE ? "persistence" :
+					o.forecast_source == LW_FORECAST_CONSTANT ? "constant" :
+					o.forecast_source == LW_FORECAST_CAUSAL ? "causal" :
+					o.forecast_source == LW_FORECAST_BLEND ? "blend" : "unavailable",
+					(unsigned long long)o.forecast_labels,
+					(unsigned long long)o.forecast_dropped,
+					o.forecast_weights[0], o.forecast_weights[1], o.forecast_weights[2]);
 		}
 		if (tel) {
 			fprintf(tel, "]}\n");

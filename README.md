@@ -60,7 +60,7 @@ Optional joint planning:
 sudo build/lerwattd --policy mpc --cross-cluster --telemetry lerwatt-joint.jsonl
 ```
 
-MPC uses the rule controller while its model trains. It needs at least about 90 seconds of suitable observations; a hot start or insufficient load variation can take longer. Joint search requires trained models, package and cluster sensors, Energy Models and a bounded number of OPP combinations; otherwise independent control continues. `forecast_c` is an expected temperature five seconds ahead, while `pred_c` is the planner's prediction. A value of `-1` means unavailable. Prediction error is evaluated against future measurements, not inferred from work served.
+MPC uses the rule controller while its model trains. It needs at least about 90 seconds of suitable observations; a hot start or insufficient load variation can take longer. Joint search requires trained models, package and cluster sensors, Energy Models and a bounded number of OPP combinations; otherwise independent control continues. `forecast_c` is an expected temperature five seconds ahead, while `pred_c` is the planner's prediction. A value of `-1` means unavailable. Prediction error is evaluated against future measurements, not inferred from work served. `forecast_source` and `forecast_weights` identify persistence/model/blended predictions; `forecast_labels` and `forecast_dropped` show completed and rejected feedback. The point forecaster can fall back to persistence while the thermal model trains.
 
 On a real board, use the same daemon commands without starting the simulator. No real-board results have been recorded yet.
 
@@ -78,7 +78,7 @@ Both controllers may start independently. The daemon retries when the contract i
 
 The rule, independent MPC and joint MPC paths are tested at the same temperature settings. A shared raw-temperature guard reacts before filtered control, including during startup. All three keep the kernel's own passive and critical trips enabled.
 
-**The rule controller remains the default.** Joint MPC does not consistently improve both work served and frequency-ceiling stability. Forecast accuracy is also workload-dependent: the model improves some burst forecasts but does not consistently beat persistence. Full comparisons, regressions and reproduction commands are in [Simulation](docs/SIMULATION.md).
+**The rule controller remains the default.** Joint MPC does not consistently improve both work served and frequency-ceiling stability. Forecast accuracy is workload-dependent. Delayed feedback reduces average hot-spot error on reserved simulator workloads, with small regressions in some cases; it does not universally beat persistence. See the [forecast evaluation](results/forecast-feedback/README.md). Full comparisons, regressions and reproduction commands are in [Simulation](docs/SIMULATION.md).
 
 The ARM64 VM runs real Linux scheduling, daemon code and BPF maps. Frequencies, power and thermals are simulated; VM task latency does not represent the simulated board. These results do not establish hardware energy savings or production safety. Real-hardware calibration and measurement are still required.
 

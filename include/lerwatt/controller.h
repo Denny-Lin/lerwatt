@@ -29,6 +29,7 @@
 
 #include "lerwatt/hal.h"
 #include "lerwatt/learn.h"
+#include "lerwatt/forecast.h"
 
 enum lw_ctl_policy {
 	LW_POLICY_RULE = 0,	/* PI power budget with hysteresis (default) */
@@ -99,6 +100,7 @@ struct lw_ctl_state {
 	double pkg_c;			/* filtered package temperature */
 	double mpc_peak_c;		/* recent peak of the filtered zone temperature */
 	uint64_t last_group_ns;
+	struct lw_forecaster forecaster;
 };
 
 struct lw_ctl_out {
@@ -115,6 +117,10 @@ struct lw_ctl_out {
 	bool joint_active;
 	double predicted_c;		/* model's temperature at the horizon, NAN if none */
 	double forecast_c;		/* expected 5 s point forecast; not a safety bound */
+	int forecast_source;		/* lw_forecast_expert, -1 when unavailable */
+	uint64_t forecast_labels;
+	uint64_t forecast_dropped;
+	double forecast_weights[LW_FORECAST_EXPERTS];
 };
 
 void lw_ctl_default_params(struct lw_ctl_params *p, int32_t lowest_passive_mc);
