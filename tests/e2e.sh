@@ -51,6 +51,16 @@ for _ in $(seq 1 50); do [ -f "$ROOT/.lerwatt-sim" ] && break; sleep 0.1; done
 ORIG=$(cat "$MAXF")
 pass "simulator up, policy4 scaling_max_freq = $ORIG"
 
+# A second simulator must not reset the live board, even with --force.
+for extra in "" --force; do
+	if "$SIM" --root "$ROOT" ${extra:+"$extra"} --load pattern:idle --virtual \
+		--duration 0.1 2>"$WORK/second.err"; then
+		fail "second simulator took over a live root ($extra)"
+	fi
+	grep -q "cannot lock simulator root" "$WORK/second.err" || fail "second simulator failed for an unexpected reason"
+done
+pass "live root rejects a second simulator, including --force"
+
 # 2. lerwattd finds the simulator without being told where it is.
 LERWATT_SIM_ROOT=$ROOT "$D" "${SYSROOT_ARGS[@]}" --duration 12 \
 	--telemetry "$WORK/tel.jsonl" 2>"$WORK/d.err" || fail "lerwattd exited non-zero: $(cat "$WORK/d.err")"
@@ -84,4 +94,44 @@ wait "$SIM_PID" 2>/dev/null || true
 SIM_PID=
 [ ! -f "$ROOT/.lerwatt-sim" ] || fail "simulator marker left behind"
 pass "simulator removed its marker on exit"
+
+# 4. Normal exits retain the root identity, not the live marker. Reuse the
+# exact tree without --force after SIGTERM, duration expiry and SIGINT.
+[ -f "$ROOT/.lerwatt-sim-root" ] || fail "persistent root identity missing"
+if [ ${#SYSROOT_ARGS[@]} -eq 0 ]; then
+	if LERWATT_SIM_ROOT=$ROOT "$D" --duration 0.1 2>"$WORK/stopped.err"; then
+		fail "lerwattd attached to a stopped simulator"
+	fi
+fi
+# Retain unrelated files and recovery data: restarting is not recursive cleanup.
+printf 'preserve me\n' >"$ROOT/keep.txt"
+mkdir -p "$(dirname "$JOURNAL")"
+printf 'recovery sentinel\n' >"$JOURNAL"
+for _ in 1 2; do
+	"$SIM" --root "$ROOT" --load pattern:idle --virtual --duration 0.1 \
+		2>"$WORK/restart.err" || fail "same-root restart failed: $(cat "$WORK/restart.err")"
+	[ ! -f "$ROOT/.lerwatt-sim" ] || fail "duration exit left a live marker"
+done
+"$SIM" --root "$ROOT" --load pattern:idle 2>"$WORK/restart.err" &
+SIM_PID=$!
+for _ in $(seq 1 50); do [ -f "$ROOT/.lerwatt-sim" ] && break; sleep 0.1; done
+[ -f "$ROOT/.lerwatt-sim" ] || fail "restart before SIGINT failed"
+kill -INT "$SIM_PID"
+wait "$SIM_PID" || fail "SIGINT exit failed"
+SIM_PID=
+[ ! -f "$ROOT/.lerwatt-sim" ] || fail "SIGINT exit left a live marker"
+[ "$(cat "$ROOT/keep.txt")" = 'preserve me' ] || fail "restart changed unrelated data"
+[ "$(cat "$JOURNAL")" = 'recovery sentinel' ] || fail "restart changed the recovery journal"
+pass "same root restarts after SIGTERM, duration expiry and SIGINT; data preserved"
+
+# 5. Unidentified non-empty roots (including pre-fix leftovers) stay protected.
+mkdir -p "$WORK/foreign"
+printf 'not a simulator\n' >"$WORK/foreign/keep.txt"
+if "$SIM" --root "$WORK/foreign" --load pattern:idle --virtual --duration 0.1 \
+	2>"$WORK/foreign.err"; then
+	fail "simulator accepted an unidentified non-empty root"
+fi
+grep -q "not empty and has no simulator marker" "$WORK/foreign.err" || fail "unexpected foreign-root error"
+[ "$(cat "$WORK/foreign/keep.txt")" = 'not a simulator' ] || fail "foreign data changed"
+pass "unidentified non-empty roots remain protected"
 echo "e2e: all checks passed"

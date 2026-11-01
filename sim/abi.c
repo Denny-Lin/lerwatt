@@ -17,11 +17,29 @@
 #include <stdlib.h>
 #include <string.h>
 #include <sys/stat.h>
+#include <sys/file.h>
 #include <unistd.h>
 
 #include "abi.h"
 
 #define USER_HZ	100
+#define ROOT_MARKER "/.lerwatt-sim-root"
+#define ROOT_ID "lerwatt-sim root version=1\n"
+
+static bool is_sim_root(const char *root)
+{
+	char path[600], buf[sizeof(ROOT_ID)];
+	int fd;
+	ssize_t n;
+
+	snprintf(path, sizeof(path), "%s%s", root, ROOT_MARKER);
+	fd = open(path, O_RDONLY | O_CLOEXEC | O_NOFOLLOW);
+	if (fd < 0)
+		return false;
+	n = read(fd, buf, sizeof(buf));
+	close(fd);
+	return n == sizeof(ROOT_ID) - 1 && !memcmp(buf, ROOT_ID, sizeof(ROOT_ID) - 1);
+}
 
 static int mkdir_p(const char *path)
 {
@@ -147,25 +165,47 @@ int sim_abi_create(struct sim_abi *a, const char *root, const struct sim_state *
 	int cdev = 0;
 
 	memset(a, 0, sizeof(*a));
+	a->root_lock_fd = -1;
 	if (!root || !root[0] || !strcmp(root, "/") || !strncmp(root, "/sys", 4) ||
-	    !strncmp(root, "/proc", 5)) {
+	    !strncmp(root, "/proc", 5) || strlen(root) >= sizeof(a->root)) {
 		snprintf(err, errlen, "refusing to use %s as a simulator root", root ? root : "");
 		return -1;
 	}
 	snprintf(a->root, sizeof(a->root), "%s", root);
 	absolute(a, path, sizeof(path), "/" ".lerwatt-sim");
-	if (!force && access(path, F_OK) && !dir_is_empty(root)) {
+	if (!force && access(path, F_OK) && !is_sim_root(root) && !dir_is_empty(root)) {
 		snprintf(err, errlen, "%s is not empty and has no simulator marker; use --force", root);
 		return -1;
 	}
-	unlink(path);	/* invisible to lerwattd until the tree is complete */
 	if (mkdir_p(root)) {
 		snprintf(err, errlen, "cannot create %s: %s", root, strerror(errno));
 		return -1;
 	}
+	/* A persistent identity permits restarts without accepting arbitrary trees.
+	 * Hold its lock for the entire run, including with --force. Never unlink it:
+	 * another process must not acquire a different inode for the same root.
+	 */
+	absolute(a, path, sizeof(path), ROOT_MARKER);
+	a->root_lock_fd = open(path, O_RDWR | O_CREAT | O_CLOEXEC | O_NOFOLLOW, 0644);
+	if (a->root_lock_fd < 0 || flock(a->root_lock_fd, LOCK_EX | LOCK_NB)) {
+		snprintf(err, errlen, "cannot lock simulator root %s: %s", root, strerror(errno));
+		if (a->root_lock_fd >= 0)
+			close(a->root_lock_fd);
+		a->root_lock_fd = -1;
+		return -1;
+	}
+	if (ftruncate(a->root_lock_fd, 0) ||
+	    write(a->root_lock_fd, ROOT_ID, sizeof(ROOT_ID) - 1) != sizeof(ROOT_ID) - 1) {
+		snprintf(err, errlen, "cannot identify simulator root %s: %s", root, strerror(errno));
+		close(a->root_lock_fd);
+		a->root_lock_fd = -1;
+		return -1;
+	}
+	absolute(a, path, sizeof(path), "/.lerwatt-sim");
+	unlink(path);	/* invisible to lerwattd until the tree is complete */
 
 	if (dyn(a, "/proc/stat") != DYN_STAT || dyn(a, "/sys/class/hwmon/hwmon0/power1_input") != DYN_METER)
-		return -1;
+		goto fail;
 
 	snprintf(buf, sizeof(buf), "0-%d\n", p->ncpus - 1);
 	put(a, "/sys/devices/system/cpu/possible", "%s", buf);
@@ -339,8 +379,13 @@ int sim_abi_create(struct sim_abi *a, const char *root, const struct sim_state *
 
 	/* Marker last: lerwattd attaches only to a complete tree. */
 	snprintf(buf, sizeof(buf), "platform=%s version=1 pid=%d\n", p->name, (int)getpid());
-	put(a, "/" ".lerwatt-sim", "%s", buf);
+	if (put(a, "/" ".lerwatt-sim", "%s", buf))
+		goto fail;
 	return 0;
+fail:
+	snprintf(err, errlen, "cannot finish simulator root %s", root);
+	sim_abi_close(a);
+	return -1;
 }
 
 static bool read_rel(const struct sim_abi *a, const char *rel, char *buf, size_t len)
@@ -479,6 +524,10 @@ void sim_abi_close(struct sim_abi *a)
 {
 	char path[600];
 
+	if (a->root_lock_fd < 0)
+		return;
 	absolute(a, path, sizeof(path), "/" ".lerwatt-sim");
 	unlink(path);
+	close(a->root_lock_fd);
+	a->root_lock_fd = -1;
 }

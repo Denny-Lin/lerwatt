@@ -29,6 +29,14 @@ No simulator object is linked into `lerwattd` (see the `Makefile`). The only thi
 
 The simulator writes the marker last and deletes it on exit, so `lerwattd` never attaches to a half-built or stopped tree. It refuses `/`, `/sys` and `/proc` as its root.
 
+A separate `.lerwatt-sim-root` identity remains after exit, allowing the same
+root to restart without `--force`. The simulator holds an exclusive lock on
+that file while running; a second simulator cannot take over the root, even
+with `--force`. ABI files, unrelated files and recovery journals are retained.
+Older non-empty roots without either marker are still rejected: inspect and
+preserve them before selecting a fresh root. The persistent identity alone
+does not make a stopped simulator discoverable by `lerwattd`.
+
 ```sh
 make && make test && make e2e
 

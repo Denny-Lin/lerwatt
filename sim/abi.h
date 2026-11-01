@@ -19,6 +19,7 @@ struct sim_abi_file {
 
 struct sim_abi {
 	char root[384];
+	int root_lock_fd;
 	int ndyn;
 	struct sim_abi_file dyn[SIM_ABI_MAX_DYN];
 	unsigned long bad_writes;
@@ -31,7 +32,7 @@ int sim_abi_create(struct sim_abi *a, const char *root, const struct sim_state *
 void sim_abi_ingest(struct sim_abi *a, struct sim_state *s);
 /* Write every dynamic file whose content changed. */
 void sim_abi_publish(struct sim_abi *a, const struct sim_state *s);
-/* Remove the marker so nobody attaches to a stopped simulator. */
+/* Remove the live marker and unlock; retain the root identity for restarts. */
 void sim_abi_close(struct sim_abi *a);
 
 #endif /* LERWATT_SIM_ABI_H */
