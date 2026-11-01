@@ -1,12 +1,14 @@
 # Lerwatt — A Self-Learning Power Manager for Linux
 
-Lerwatt is an experimental power manager for ARM64 Linux. It learns CPU frequency limits, idle-depth constraints and thermal power budgets, and cooperates with the [Lertick](https://github.com/Denny-Lin/lertick) sched_ext scheduler so that scheduling and power decisions stop working against each other.
+Lerwatt is an experimental power manager for Linux. It is designed to learn CPU frequency limits, idle-depth constraints and thermal power budgets, and it cooperates with the [Lertick](https://github.com/Denny-Lin/lertick) sched_ext scheduler so that scheduling and power decisions stop working against each other.
 
 [繁體中文](README.zh-TW.md) · [Design](docs/DESIGN.md) · [Simulation](docs/SIMULATION.md) · [Naming](docs/NAMING.md) · [Lertick](https://github.com/Denny-Lin/lertick)
 
 ## Current status
 
 **Phase 1: rule-based controller and RK3588 simulator.** `lerwattd` (the controller) and `lerwatt-sim` (a simulated RK3588 board) build, and their unit, closed-loop and end-to-end tests pass. There is no learning yet, and nothing has run on real hardware.
+
+The first platform is ARM64, modeled on an RK3588 board. The hardware layer reads and writes only standard Linux interfaces (cpufreq, cpuidle, thermal, hwmon), so `lerwattd` is not tied to ARM64; simulating another board means adding a platform description to `sim/`.
 
 A feasibility study against the [Linux v7.3](https://github.com/torvalds/linux/tree/v7.3) source concluded that a two-controller prototype can be built on upstream interfaces without kernel patches, after four corrections to the original idea:
 

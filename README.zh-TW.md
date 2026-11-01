@@ -1,12 +1,14 @@
 # Lerwatt — 會自我學習的 Linux 電源管理器
 
-Lerwatt 是給 ARM64 Linux 的實驗性電源管理器。它學習 CPU 頻率上下限、idle 深度限制與溫度功率預算，並和 [Lertick](https://github.com/Denny-Lin/lertick) 這個 sched_ext 排程器合作，讓排程與電源決策不再互相拉扯。
+Lerwatt 是實驗性的 Linux 電源管理器，設計目標是學習 CPU 頻率上下限、idle 深度限制與溫度功率預算，並和 [Lertick](https://github.com/Denny-Lin/lertick) 這個 sched_ext 排程器合作，讓排程與電源決策不再互相拉扯。
 
 [English](README.md) · [設計文件](docs/DESIGN.md) · [模擬說明](docs/SIMULATION.md) · [命名](docs/NAMING.md) · [Lertick](https://github.com/Denny-Lin/lertick)
 
 ## 目前狀態
 
 **第 1 階段：規則版控制器與 RK3588 模擬器。** `lerwattd`（控制器）與 `lerwatt-sim`（模擬的 RK3588 板子）都能編譯，單元測試、閉迴路測試與端對端測試全部通過。目前還沒有學習功能，也還沒在真實硬體上跑過。
+
+第一個平台是 ARM64，以 RK3588 板子為模型。硬體層只讀寫標準的 Linux 介面（cpufreq、cpuidle、thermal、hwmon），所以 `lerwattd` 不綁定 ARM64；要模擬別的板子，只需在 `sim/` 加一份平台描述。
 
 對照 [Linux v7.3](https://github.com/torvalds/linux/tree/v7.3) 原始碼的可行性研究結論是：兩個控制器的原型可以只用 upstream 介面、不改 kernel 做出來，但原始構想要修正四點：
 
