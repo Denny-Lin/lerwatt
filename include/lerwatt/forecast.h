@@ -16,6 +16,7 @@ enum lw_forecast_channel { LW_FORECAST_PACKAGE, LW_FORECAST_HOT };
 enum lw_forecast_expert {
 	LW_FORECAST_PERSISTENCE, LW_FORECAST_CONSTANT, LW_FORECAST_CAUSAL, LW_FORECAST_BLEND
 };
+#define LW_FORECAST_TEMPORAL LW_FORECAST_CHOICES /* residual correction, outside the base mixture */
 
 struct lw_forecast_record {
 	uint64_t due_ns;

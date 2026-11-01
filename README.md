@@ -60,7 +60,9 @@ Optional joint planning:
 sudo build/lerwattd --policy mpc --cross-cluster --telemetry lerwatt-joint.jsonl
 ```
 
-MPC uses the rule controller while its model trains. It needs at least about 90 seconds of suitable observations; a hot start or insufficient load variation can take longer. Joint search requires trained models, package and cluster sensors, Energy Models and a bounded number of OPP combinations; otherwise independent control continues. `forecast_c` is an expected temperature five seconds ahead, while `pred_c` is the planner's prediction. A value of `-1` means unavailable. Prediction error is evaluated against future measurements, not inferred from work served. `forecast_source` and `forecast_weights` identify persistence/model/blended predictions; `forecast_labels` and `forecast_dropped` show completed and rejected feedback. The point forecaster can fall back to persistence while the thermal model trains.
+MPC uses the rule controller while its model trains. It needs at least about 90 seconds of suitable observations; a hot start or insufficient load variation can take longer. Joint search requires trained models, package and cluster sensors, Energy Models and a bounded number of OPP combinations; otherwise independent control continues.
+
+`forecast_c` is an expected temperature five seconds ahead, separate from the planner's `pred_c`. Its temporal correction learns only from completed forecasts and retains the reference when evidence is weak. `--forecast adaptive` selects the previous expert blend. Both point forecasters leave control decisions unchanged; `-1` means unavailable. See [accuracy, fallback and telemetry](results/point-model-observations/README.md).
 
 On a real board, use the same daemon commands without starting the simulator. No real-board results have been recorded yet.
 

@@ -100,6 +100,13 @@ int main(void)
 	lw_ctl_step_group(&p, many_in, many_st, many_out, LW_MAX_POLICIES, now + 2000000000ull, .1);
 	for (int k = 0; k < LW_MAX_POLICIES; k++)
 		CHECK(!many_out[k].joint_active, "oversized OPP product enabled joint search");
+
+	/* Reused outputs in rule mode must not retain temporal telemetry. */
+	p.policy = LW_POLICY_RULE;
+	memset(&out[0], 0xa5, sizeof(out[0]));
+	lw_ctl_step(&p, &in[0], &st[0], &out[0], now, .1);
+	CHECK(out[0].forecast_correction_c == 0 && out[0].temporal_labels == 0 &&
+	      out[0].temporal_dropped == 0, "rule mode retained stale point-correction telemetry");
 	puts("test_controller: fallback, joint allocation and raw-guard checks passed");
 	return 0;
 }

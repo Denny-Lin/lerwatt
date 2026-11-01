@@ -46,6 +46,7 @@ static void usage(FILE *out)
 		"  --policy rule|mpc  rule: PI budget (default); mpc: experimental learned\n"
 		"                     thermal model with predictive ceilings\n"
 		"  --cross-cluster    jointly plan MPC ceilings (requires --policy mpc)\n"
+		"  --forecast temporal|adaptive  point forecast (default temporal; MPC only)\n"
 		"  --describe         print the discovered system and exit\n"
 		"  --restore          write back journaled original values and exit\n");
 }
@@ -96,6 +97,7 @@ int main(int argc, char **argv)
 		{ "no-contract", no_argument, NULL, 'c' },
 		{ "policy", required_argument, NULL, 'P' },
 		{ "cross-cluster", no_argument, NULL, 'G' },
+		{ "forecast", required_argument, NULL, 'F' },
 		{ "describe", no_argument, NULL, 'D' },
 		{ "restore", no_argument, NULL, 'R' },
 		{ "help", no_argument, NULL, 'h' },
@@ -106,6 +108,7 @@ int main(int argc, char **argv)
 	double duration_s = 0, soft_c = 0;
 	bool dry_run = false, use_contract = true, describe = false, restore = false;
 	bool cross_cluster = false;
+	bool temporal_forecast = true;
 	static struct lw_system sys;
 	struct lw_ctl_state st[LW_MAX_POLICIES] = { 0 };
 	struct lw_ctl_params params;
@@ -132,6 +135,13 @@ int main(int argc, char **argv)
 		case 'n': dry_run = true; break;
 		case 'c': use_contract = false; break;
 		case 'G': cross_cluster = true; break;
+		case 'F':
+			if (strcmp(optarg, "temporal") && strcmp(optarg, "adaptive")) {
+				usage(stderr);
+				return 1;
+			}
+			temporal_forecast = !strcmp(optarg, "temporal");
+			break;
 		case 'P':
 			if (strcmp(optarg, "rule") && strcmp(optarg, "mpc")) {
 				usage(stderr);
@@ -178,6 +188,7 @@ int main(int argc, char **argv)
 	lw_ctl_default_params(&params, lowest_passive(&sys));
 	params.policy = policy;
 	params.cross_cluster = cross_cluster;
+	params.temporal_forecast = temporal_forecast;
 	if (policy == LW_POLICY_MPC && sys.package_zone < 0)
 		fprintf(stderr, "lerwatt: no package zone: --policy mpc stays on the rule policy\n");
 	if (soft_c > 0)
@@ -228,8 +239,9 @@ int main(int argc, char **argv)
 					have_contract ? "attached" : "lost (running alone)");
 		}
 		if (tel)
-			fprintf(tel, "{\"t\":%.3f,\"mode\":\"%s\",\"power_w\":%.3f,\"measured\":%s,\"clusters\":[",
-				(s.t_ns - start_ns) / 1e9, sys.simulated ? "sim" : "hw", s.power_w,
+			fprintf(tel, "{\"t\":%.3f,\"t_ns\":%llu,\"mode\":\"%s\",\"power_w\":%.3f,\"measured\":%s,\"clusters\":[",
+				(s.t_ns - start_ns) / 1e9, (unsigned long long)(s.t_ns - start_ns),
+				sys.simulated ? "sim" : "hw", s.power_w,
 				s.power_measured ? "true" : "false");
 
 		struct lw_ctl_in inputs[LW_MAX_POLICIES];
@@ -284,10 +296,11 @@ int main(int argc, char **argv)
 				lw_contract_publish(&contract, (unsigned int)i, &r);
 			}
 			if (tel)
-				fprintf(tel, "%s{\"id\":%d,\"temp_c\":%.1f,\"busy\":%.3f,\"cur_mhz\":%u,"
+				fprintf(tel, "%s{\"id\":%d,\"temp_c\":%.3f,\"busy\":%.3f,\"cur_mhz\":%u,"
 					"\"ceil_mhz\":%u,\"budget_w\":%.3f,\"est_w\":%.3f,\"price\":%u,"
-					"\"floor_mhz\":%u,\"em\":%s,\"model\":%s,\"joint\":%s,\"pred_c\":%.1f,\"forecast_c\":%.1f,"
-					"\"forecast_source\":\"%s\",\"forecast_labels\":%llu,\"forecast_dropped\":%llu,\"forecast_weights\":[%.5f,%.5f,%.5f]}",
+					"\"floor_mhz\":%u,\"em\":%s,\"model\":%s,\"joint\":%s,\"pred_c\":%.1f,\"forecast_c\":%.3f,"
+					"\"forecast_source\":\"%s\",\"forecast_labels\":%llu,\"forecast_dropped\":%llu,\"forecast_weights\":[%.5f,%.5f,%.5f],"
+					"\"forecast_base_c\":%.3f,\"forecast_correction_c\":%.3f,\"temporal_labels\":%llu,\"temporal_dropped\":%llu}",
 					i ? "," : "", i, in.temp_mc == INT32_MIN ? -1.0 : in.temp_mc / 1000.0,
 					in.busy_mean, in.cur_khz / 1000, o.ceiling_khz / 1000, o.budget_w,
 					o.est_power_w, o.price_milli, o.floor_khz / 1000,
@@ -298,10 +311,14 @@ int main(int argc, char **argv)
 					o.forecast_source == LW_FORECAST_PERSISTENCE ? "persistence" :
 					o.forecast_source == LW_FORECAST_CONSTANT ? "constant" :
 					o.forecast_source == LW_FORECAST_CAUSAL ? "causal" :
-					o.forecast_source == LW_FORECAST_BLEND ? "blend" : "unavailable",
+					o.forecast_source == LW_FORECAST_BLEND ? "blend" :
+					o.forecast_source == LW_FORECAST_TEMPORAL ? "temporal" : "unavailable",
 					(unsigned long long)o.forecast_labels,
 					(unsigned long long)o.forecast_dropped,
-					o.forecast_weights[0], o.forecast_weights[1], o.forecast_weights[2]);
+					o.forecast_weights[0], o.forecast_weights[1], o.forecast_weights[2],
+					isnan(o.forecast_base_c) ? -1.0 : o.forecast_base_c,
+					o.forecast_correction_c, (unsigned long long)o.temporal_labels,
+					(unsigned long long)o.temporal_dropped);
 		}
 		if (tel) {
 			fprintf(tel, "]}\n");

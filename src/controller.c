@@ -22,6 +22,7 @@ void lw_ctl_default_params(struct lw_ctl_params *p, int32_t lowest_passive_mc)
 	p->lat_crit_threshold = 0.5;
 	p->policy = LW_POLICY_RULE;
 	p->cross_cluster = false;
+	p->temporal_forecast = true;
 	p->mpc_horizon_s = 5.0;
 	p->mpc_over_soft_c = p->deadband_c;	/* same filtered line as the rule */
 	p->mpc_margin_c = 0.5;
@@ -149,6 +150,10 @@ static void ctl_step(const struct lw_ctl_params *p, const struct lw_ctl_in *in,
 	out->joint_active = false;
 	out->predicted_c = NAN;
 	out->forecast_c = NAN;
+	out->forecast_base_c = NAN;
+	out->forecast_correction_c = 0;
+	out->temporal_labels = 0;
+	out->temporal_dropped = 0;
 	out->forecast_source = -1;
 	out->forecast_labels = 0;
 	out->forecast_dropped = 0;
@@ -329,9 +334,19 @@ priced:
 		}
 		lw_forecast_step(&st->forecaster, now_ns, observed, candidate);
 		out->forecast_c = st->forecaster.prediction[LW_FORECAST_HOT];
+		out->forecast_base_c = out->forecast_c;
 		out->forecast_source = (int)st->forecaster.selected[LW_FORECAST_HOT];
 		out->forecast_labels = st->forecaster.labels[LW_FORECAST_HOT][LW_FORECAST_PERSISTENCE];
 		out->forecast_dropped = st->forecaster.dropped;
+		if (p->temporal_forecast) {
+			out->forecast_c = lw_temporal_step(&st->temporal, now_ns, observed[1],
+							 out->forecast_base_c, candidate[1]);
+			out->forecast_correction_c = st->temporal.correction_c;
+			out->temporal_labels = st->temporal.labels;
+			out->temporal_dropped = st->temporal.dropped;
+			if (st->temporal.active)
+				out->forecast_source = LW_FORECAST_TEMPORAL;
+		}
 		for (int e = 0; e < LW_FORECAST_EXPERTS; e++)
 			out->forecast_weights[e] = st->forecaster.output_weight[LW_FORECAST_HOT][e];
 	}

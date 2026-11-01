@@ -31,6 +31,12 @@ fi
 grep -q -- '--cross-cluster requires --policy mpc' "$WORK/invalid.err" || fail "unhelpful joint-policy error"
 pass "joint planning requires the learned policy"
 
+if "$D" --forecast invalid 2>"$WORK/invalid-forecast.err"; then
+	fail "unknown point forecaster was accepted"
+fi
+grep -q -- '--forecast temporal|adaptive' "$WORK/invalid-forecast.err" || fail "unhelpful forecast-policy error"
+pass "unknown point forecaster is rejected before touching a system"
+
 # Never touch a real machine from a test: if this host has cpufreq, pin the sysroot.
 SYSROOT_ARGS=()
 if ls /sys/devices/system/cpu/cpufreq/policy*/scaling_max_freq >/dev/null 2>&1; then

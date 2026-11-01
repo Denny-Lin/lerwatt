@@ -1,0 +1,203 @@
+{
+  "replicates": [
+    {
+      "replicate": 0,
+      "profiles": 32,
+      "mae_change_percent": -29.436933573170478,
+      "rmse_change_percent": -24.445490699991634
+    },
+    {
+      "replicate": 1,
+      "profiles": 32,
+      "mae_change_percent": -28.954718163524305,
+      "rmse_change_percent": -23.86886980930214
+    },
+    {
+      "replicate": 2,
+      "profiles": 32,
+      "mae_change_percent": -29.05542157523402,
+      "rmse_change_percent": -24.001558581018713
+    },
+    {
+      "replicate": 3,
+      "profiles": 32,
+      "mae_change_percent": -29.189260038191723,
+      "rmse_change_percent": -24.145170892222556
+    },
+    {
+      "replicate": 4,
+      "profiles": 32,
+      "mae_change_percent": -29.505038059711918,
+      "rmse_change_percent": -24.39426867364216
+    },
+    {
+      "replicate": 5,
+      "profiles": 32,
+      "mae_change_percent": -29.326303036450664,
+      "rmse_change_percent": -24.260158651322637
+    }
+  ],
+  "profiles": [
+    {
+      "case": "asymmetric-bare-35C",
+      "mae_mean_change_percent": 0.0,
+      "rmse_mean_change_percent": 0.0
+    },
+    {
+      "case": "asymmetric-fan-25C",
+      "mae_mean_change_percent": 0.0,
+      "rmse_mean_change_percent": 0.0
+    },
+    {
+      "case": "asymmetric-passive-15C",
+      "mae_mean_change_percent": 0.0,
+      "rmse_mean_change_percent": 0.0
+    },
+    {
+      "case": "cooling-change-20C",
+      "mae_mean_change_percent": -1.9281685696176276,
+      "rmse_mean_change_percent": -3.0994195976160377
+    },
+    {
+      "case": "cooling-change-30C",
+      "mae_mean_change_percent": -3.7824506915203226,
+      "rmse_mean_change_percent": -4.956878966524969
+    },
+    {
+      "case": "period022-passive-25C",
+      "mae_mean_change_percent": -0.003073687823451632,
+      "rmse_mean_change_percent": -0.0022509267946335676
+    },
+    {
+      "case": "period09-fan-25C",
+      "mae_mean_change_percent": -0.1880958729430504,
+      "rmse_mean_change_percent": -0.19120824084174481
+    },
+    {
+      "case": "period14-bare-35C",
+      "mae_mean_change_percent": -24.714838663062267,
+      "rmse_mean_change_percent": -21.577750821592122
+    },
+    {
+      "case": "period142-passive-30C",
+      "mae_mean_change_percent": -80.45236393239902,
+      "rmse_mean_change_percent": -78.2896975362045
+    },
+    {
+      "case": "period26-passive-15C",
+      "mae_mean_change_percent": -1.3443394438140022,
+      "rmse_mean_change_percent": -1.1648283541682902
+    },
+    {
+      "case": "period38-bare-15C",
+      "mae_mean_change_percent": 0.0,
+      "rmse_mean_change_percent": 0.0
+    },
+    {
+      "case": "period58-bare-25C",
+      "mae_mean_change_percent": -42.39541963727993,
+      "rmse_mean_change_percent": -36.961302468384915
+    },
+    {
+      "case": "period62-fan-30C",
+      "mae_mean_change_percent": 0.0,
+      "rmse_mean_change_percent": 0.0
+    },
+    {
+      "case": "period82-fan-35C",
+      "mae_mean_change_percent": -66.27289242656802,
+      "rmse_mean_change_percent": -62.46654810890399
+    },
+    {
+      "case": "phase-reset34-bare-25C",
+      "mae_mean_change_percent": -45.04325988205801,
+      "rmse_mean_change_percent": -36.16616309422346
+    },
+    {
+      "case": "phase-reset66-passive-30C",
+      "mae_mean_change_percent": -61.922701722944076,
+      "rmse_mean_change_percent": -51.96684787671173
+    },
+    {
+      "case": "random07-passive-35C",
+      "mae_mean_change_percent": 0.0,
+      "rmse_mean_change_percent": 0.0
+    },
+    {
+      "case": "random23-fan-25C",
+      "mae_mean_change_percent": 0.0,
+      "rmse_mean_change_percent": 0.0
+    },
+    {
+      "case": "random61-passive-30C",
+      "mae_mean_change_percent": 0.0,
+      "rmse_mean_change_percent": 0.0
+    },
+    {
+      "case": "random7-bare-20C",
+      "mae_mean_change_percent": 0.0,
+      "rmse_mean_change_percent": 0.0
+    },
+    {
+      "case": "sine11-fan-15C",
+      "mae_mean_change_percent": -70.27312295180175,
+      "rmse_mean_change_percent": -68.64918632824359
+    },
+    {
+      "case": "sine113-passive-25C",
+      "mae_mean_change_percent": 0.0,
+      "rmse_mean_change_percent": 0.0
+    },
+    {
+      "case": "sine191-bare-20C",
+      "mae_mean_change_percent": 0.0,
+      "rmse_mean_change_percent": 0.0
+    },
+    {
+      "case": "sine41-bare-35C",
+      "mae_mean_change_percent": 0.0,
+      "rmse_mean_change_percent": 0.0
+    },
+    {
+      "case": "sparse13-bare-20C",
+      "mae_mean_change_percent": 0.007052878187585598,
+      "rmse_mean_change_percent": 0.002782641203191716
+    },
+    {
+      "case": "sparse31-fan-35C",
+      "mae_mean_change_percent": 0.0,
+      "rmse_mean_change_percent": 0.0
+    },
+    {
+      "case": "sparse7-passive-15C",
+      "mae_mean_change_percent": -55.02161207660248,
+      "rmse_mean_change_percent": -53.19107937179726
+    },
+    {
+      "case": "steps-bare-15C",
+      "mae_mean_change_percent": 0.13083165860419133,
+      "rmse_mean_change_percent": 0.22748939279921832
+    },
+    {
+      "case": "steps-fan-25C",
+      "mae_mean_change_percent": 0.0,
+      "rmse_mean_change_percent": 0.0
+    },
+    {
+      "case": "steps-passive-35C",
+      "mae_mean_change_percent": -0.0006035737602494429,
+      "rmse_mean_change_percent": -0.0021798092156743998
+    },
+    {
+      "case": "varying-duty46-bare-15C",
+      "mae_mean_change_percent": -5.64885086731225,
+      "rmse_mean_change_percent": -3.524478432087641
+    },
+    {
+      "case": "varying-duty94-fan-35C",
+      "mae_mean_change_percent": -38.24303037041624,
+      "rmse_mean_change_percent": -29.52987627868814
+    }
+  ],
+  "passed_frozen_module_gate": true
+}

@@ -1,0 +1,51 @@
+{
+  "frozen_before_reserved_scores": true,
+  "candidate": "delayed normalized LMS temperature-change predictor, quality-gated against deployed point forecast",
+  "features": [
+    "bias",
+    "hot minus 1s lag",
+    "hot minus 2s lag",
+    "hot minus 5s lag",
+    "hot minus 10s lag",
+    "constant-model forecast minus hot",
+    "causal-model forecast minus hot"
+  ],
+  "learning_rate": "1/(50 outstanding steps + 1)",
+  "normalization_noise_floor_squared": 0.25,
+  "coefficient_bounds": [
+    -4,
+    4
+  ],
+  "temperature_change_feature_bounds_c": [
+    -20,
+    20
+  ],
+  "training_residual_bounds_c": [
+    -10,
+    10
+  ],
+  "forecast_delta_bounds_c": [
+    -20,
+    20
+  ],
+  "quality_loss": "30s EWMA squared error, saved predictions against matured five-second labels",
+  "repetitions": [
+    0,
+    1,
+    2,
+    3,
+    4,
+    5
+  ],
+  "negative_development_cases": [
+    "steps-passive RMSE regresses",
+    "asymmetric-bare MAE and RMSE regress",
+    "sine-passive MAE and RMSE slightly regress"
+  ],
+  "source_sha256": {
+    "results/point-model-observations/lag-prototype.c": "190f01422e9df2dc183b6163c07203d60286d54518777ee0b38e321da6c517cf",
+    "src/controller.c": "744070ae1247f3c024a86557b6e008baa651f82f52341bf9767eb55b0c6d0654",
+    "src/forecast.c": "21265a764056780555e32f03de4f4d2db0a82ed16557ec5e855b1ef7405c815e",
+    "src/learn.c": "8a5fbfc6c93f48f3e40a7abf1b2259c3b1070cdf58bc3a14079fce6402162d64"
+  }
+}
