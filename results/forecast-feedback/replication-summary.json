@@ -1,0 +1,66 @@
+{
+  "asymmetric-steps-bare-20C-seed130363": {
+    "replicates": 5,
+    "mean_old_mae_c": 1.10464,
+    "mean_new_mae_c": 0.63806,
+    "mean_old_rmse_c": 1.61686,
+    "mean_new_rmse_c": 0.99854,
+    "common_sample_fraction_min": 1.0
+  },
+  "cooling-change-35C-seed327673": {
+    "replicates": 5,
+    "mean_old_mae_c": 0.5297000000000001,
+    "mean_new_mae_c": 0.4452,
+    "mean_old_rmse_c": 0.65126,
+    "mean_new_rmse_c": 0.58526,
+    "common_sample_fraction_min": 1.0
+  },
+  "duty2of7-bare-seed458879": {
+    "replicates": 5,
+    "mean_old_mae_c": 1.2172800000000001,
+    "mean_new_mae_c": 1.2172800000000001,
+    "mean_old_rmse_c": 1.51596,
+    "mean_new_rmse_c": 1.51596,
+    "common_sample_fraction_min": 1.0
+  },
+  "noisy-burst-bare-seed393241": {
+    "replicates": 5,
+    "mean_old_mae_c": 1.5174,
+    "mean_new_mae_c": 1.08336,
+    "mean_old_rmse_c": 1.81556,
+    "mean_new_rmse_c": 1.3389600000000002,
+    "common_sample_fraction_min": 1.0
+  },
+  "random-fast-bare-35C-seed155921": {
+    "replicates": 5,
+    "mean_old_mae_c": 1.41656,
+    "mean_new_mae_c": 0.79928,
+    "mean_old_rmse_c": 1.8369,
+    "mean_new_rmse_c": 1.29854,
+    "common_sample_fraction_min": 1.0
+  },
+  "sine-passive-15C-seed262147": {
+    "replicates": 5,
+    "mean_old_mae_c": 0.66714,
+    "mean_new_mae_c": 0.67808,
+    "mean_old_rmse_c": 0.8499,
+    "mean_new_rmse_c": 0.86402,
+    "common_sample_fraction_min": 1.0
+  },
+  "sparse-bursts-fan-seed196613": {
+    "replicates": 5,
+    "mean_old_mae_c": 1.04904,
+    "mean_new_mae_c": 1.0492,
+    "mean_old_rmse_c": 1.65182,
+    "mean_new_rmse_c": 1.65198,
+    "common_sample_fraction_min": 0.8271701485867501
+  },
+  "varying-period-passive-30C-seed104729": {
+    "replicates": 5,
+    "mean_old_mae_c": 1.3876,
+    "mean_new_mae_c": 1.18548,
+    "mean_old_rmse_c": 1.7002599999999999,
+    "mean_new_rmse_c": 1.54882,
+    "common_sample_fraction_min": 1.0
+  }
+}

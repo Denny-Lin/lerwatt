@@ -1,0 +1,95 @@
+{
+  "path": "/var/tmp/lerwatt-verification-i21d43vp/cold-joint-8cpu",
+  "first_feedback_s": 5.001,
+  "final_t": 121.1,
+  "final_clusters": [
+    {
+      "id": 0,
+      "temp_c": 78.5,
+      "busy": 1.0,
+      "cur_mhz": 1608,
+      "ceil_mhz": 1608,
+      "budget_w": 1.482,
+      "est_w": 1.06,
+      "price": 708,
+      "floor_mhz": 0,
+      "em": true,
+      "model": true,
+      "joint": true,
+      "pred_c": 78.6,
+      "forecast_c": 78.5,
+      "forecast_source": "constant",
+      "forecast_labels": 707,
+      "forecast_weights": [
+        0.0,
+        1.0,
+        0.0
+      ]
+    },
+    {
+      "id": 1,
+      "temp_c": 78.5,
+      "busy": 1.0,
+      "cur_mhz": 1800,
+      "ceil_mhz": 1800,
+      "budget_w": 1.997,
+      "est_w": 1.082,
+      "price": 708,
+      "floor_mhz": 0,
+      "em": true,
+      "model": true,
+      "joint": true,
+      "pred_c": 79.7,
+      "forecast_c": 78.6,
+      "forecast_source": "blend",
+      "forecast_labels": 707,
+      "forecast_weights": [
+        0.89886,
+        0.05057,
+        0.05057
+      ]
+    },
+    {
+      "id": 2,
+      "temp_c": 77.6,
+      "busy": 1.0,
+      "cur_mhz": 1608,
+      "ceil_mhz": 1608,
+      "budget_w": 1.997,
+      "est_w": 0.777,
+      "price": 523,
+      "floor_mhz": 0,
+      "em": true,
+      "model": true,
+      "joint": true,
+      "pred_c": 78.6,
+      "forecast_c": 77.8,
+      "forecast_source": "blend",
+      "forecast_labels": 707,
+      "forecast_weights": [
+        0.82224,
+        0.08888,
+        0.08888
+      ]
+    }
+  ],
+  "source_counts": {
+    "persistence": 3004,
+    "constant": 256,
+    "causal": 0,
+    "blend": 376
+  },
+  "simulator_summary": "lerwatt-sim: 120.7 s simulated in 121.2 s: energy 1171.7 J (mean 9.71 W), work served 65.2%, 0 throttle steps, peak 79.5 / 79.5 / 78.5 C (big0 / big1 / little), 0 bad writes",
+  "exit": {
+    "event": "exit",
+    "unexpected_fallback": false,
+    "watchdog_observed": false,
+    "exit_kind": 64,
+    "exit_code": 0,
+    "reason": "unregistered from user space",
+    "message": "",
+    "default_restored": true,
+    "signal": 0,
+    "status": 0
+  }
+}

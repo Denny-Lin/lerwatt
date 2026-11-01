@@ -172,7 +172,6 @@ Original 19 held-out cases, retained as regression cases after inspection:
 
 | Case | Rule | Independent MPC | Joint MPC |
 | --- | --- | --- | --- |
-| held-out case | rule: peak / moves / served | learned: peak / moves / served | learned: peak / moves / served |
 | full passive, seed 7 | 81.3 / 2 / 68.44% | 81.3 / 4 / 68.35% | 81.3 / 2 / 68.19% |
 | full bare, seed 7 | 81.3 / 10 / 51.04% | 81.3 / 16 / 51.09% | 81.3 / 10 / 50.89% |
 | burst bare, seed 7 | 82.2 / 39 / 66.51% | 82.2 / 27 / 66.68% | 79.5 / 9 / 65.96% |
@@ -261,6 +260,33 @@ trace also regresses against constant-power forecasting. Package MAE and
 hot-spot RMSE are included in the raw JSONL. **A general prediction-accuracy
 advantage is unproven.** Future model changes can be compared against these
 recorded baselines without confusing lower forecast error with higher throughput.
+
+### Delayed-feedback point forecasts
+
+The current `forecast_c` uses an online, bounded blend of persistence,
+constant-power and causal-load model forecasts. It learns from stored
+five-second predictions only after the corresponding sensor labels arrive;
+a delayed squared-error comparison can retain a simpler expert instead.
+Thermal planning still uses `pred_c`, independent of this point forecast.
+`forecast_source`, `forecast_weights`, `forecast_labels` and `forecast_dropped`
+make fallback, calibration and late-label handling visible in telemetry.
+An untrained physical model now still provides a persistence point forecast.
+
+The original six development profiles all improve in MAE and RMSE relative to
+the previous causal forecaster. On eight reserved new profiles, equal-profile
+mean hot-spot MAE falls from 1.0847 C to 0.8694 C (19.85%). Five predeclared
+replicates show 18.27% to 21.41% reductions in that aggregate. The sine profile
+and sparse-burst matched window regress slightly; cooling-change MAE still
+loses to persistence, and package error is mixed. A model-ready coverage gap
+in sparse bursts is reported with full-window fallback metrics rather than
+silently excluded.
+
+These are causal simulator-module forecasts, not real-board or daemon
+closed-loop accuracy claims. No parameters were changed after inspecting the
+eight reserved profiles. Full tables, all replicates, rejected designs and
+runtime checks are in [the forecast report](../results/forecast-feedback/README.md).
+The independent and joint closed-loop control outputs remain byte-identical
+to the earlier control evidence; the rule remains the default.
 
 ## 5. Calibration, when the board arrives
 

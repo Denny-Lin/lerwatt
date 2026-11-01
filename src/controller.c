@@ -149,6 +149,11 @@ static void ctl_step(const struct lw_ctl_params *p, const struct lw_ctl_in *in,
 	out->joint_active = false;
 	out->predicted_c = NAN;
 	out->forecast_c = NAN;
+	out->forecast_source = -1;
+	out->forecast_labels = 0;
+	out->forecast_dropped = 0;
+	for (int e = 0; e < LW_FORECAST_EXPERTS; e++)
+		out->forecast_weights[e] = e == 0 ? 1 : 0;
 
 	if (in->temp_mc == INT32_MIN) {
 		/* No sensor: never cap blindly. */
@@ -241,7 +246,6 @@ static void ctl_step(const struct lw_ctl_params *p, const struct lw_ctl_in *in,
 		st->mpc_peak_busy = fmax(in->busy_mean, st->mpc_peak_busy *
 					 exp(-dt_s / p->mpc_peak_memory_s));
 		out->model_ready = lw_tm_ready(&st->tm);
-		out->forecast_c = lw_tm_forecast_hot(&st->tm, in->package_mc / 1000.0, 5);
 		if (out->model_ready) {
 			double pred = plan_temp_c(in, st, st->ceil_idx, p->mpc_horizon_s);
 			bool over = temp_c > limit;
@@ -308,6 +312,29 @@ static void ctl_step(const struct lw_ctl_params *p, const struct lw_ctl_in *in,
 		st->ceiling_changes++;
 	}
 priced:
+	if (p->policy == LW_POLICY_MPC) {
+		double observed[2] = {
+			in->package_mc == INT32_MIN ? NAN : in->package_mc / 1000.0,
+			in->temp_mc / 1000.0,
+		};
+		double candidate[2][3] = {
+			{ observed[0], NAN, NAN }, { observed[1], NAN, NAN },
+		};
+
+		if (in->package_mc != INT32_MIN && lw_tm_ready(&st->tm)) {
+			candidate[0][1] = lw_tm_package(&st->tm, observed[0], st->tm.last_total_w, 5);
+			candidate[1][1] = candidate[0][1] + lw_tm_offset(&st->tm, st->tm.last_own_w);
+			candidate[0][2] = lw_tm_forecast_package(&st->tm, observed[0], 5);
+			candidate[1][2] = lw_tm_forecast_hot(&st->tm, observed[0], 5);
+		}
+		lw_forecast_step(&st->forecaster, now_ns, observed, candidate);
+		out->forecast_c = st->forecaster.prediction[LW_FORECAST_HOT];
+		out->forecast_source = (int)st->forecaster.selected[LW_FORECAST_HOT];
+		out->forecast_labels = st->forecaster.labels[LW_FORECAST_HOT][LW_FORECAST_PERSISTENCE];
+		out->forecast_dropped = st->forecaster.dropped;
+		for (int e = 0; e < LW_FORECAST_EXPERTS; e++)
+			out->forecast_weights[e] = st->forecaster.output_weight[LW_FORECAST_HOT][e];
+	}
 	if (st->ceil_idx < min_idx)
 		st->ceil_idx = min_idx;
 

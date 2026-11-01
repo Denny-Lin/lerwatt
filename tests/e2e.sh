@@ -83,6 +83,8 @@ pass "clean exit restored every knob and removed the journal"
 LERWATT_SIM_ROOT=$ROOT "$D" "${SYSROOT_ARGS[@]}" --policy mpc --cross-cluster --duration 0.3 \
 	--telemetry "$WORK/joint.jsonl" 2>"$WORK/joint.err" || fail "joint-policy startup failed"
 grep -q '"joint":false' "$WORK/joint.jsonl" || fail "untrained joint policy did not report fallback"
+grep -q '"forecast_source":"persistence"' "$WORK/joint.jsonl" || fail "untrained forecasts did not use persistence"
+grep -q '"forecast_labels":0' "$WORK/joint.jsonl" || fail "forecast used feedback before its five-second horizon"
 [ "$(cat "$MAXF")" = "$ORIG" ] || fail "joint-policy fallback did not restore knobs"
 [ ! -f "$JOURNAL" ] || fail "joint-policy fallback left a journal"
 pass "joint-policy startup falls back before training and restores knobs"
