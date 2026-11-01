@@ -101,6 +101,19 @@ sudo build/lerwattd --telemetry lerwatt.jsonl
 
 "Work served" below 100% under full load is expected: the pattern asks every core for a big core's worth of work, which the A55 cores cannot deliver. On the bare board the kernel's step_wise governor holds the hot spot near the trip by sawtoothing the frequency (5228 steps); Lerwatt keeps it about 3 C under the trip with 29 moves, spending 8% less power for 2.2 points less work. These are simulator results and prove only that the control loop behaves; they are not energy claims.
 
+### First learned policy (`--policy mpc`, experimental)
+
+The learned policy fits a thermal model online (recursive least squares on 5 s averages: dT/dt = a·P_total + c·T + d), steps down when the model predicts the current ceiling will cross the soft limit within 20 s, and steps up only when the next OPP's predicted steady state is under the limit. The rule controller's reactive guard stays in force. Same 900 s cases:
+
+| Scenario | Rule: peak C / moves / served | Learned: peak C / moves / served |
+| --- | --- | --- |
+| Full load, passive | 81.3 / 2 / 68.4% | 81.3 / 19 / 68.0% |
+| Big-core load, passive | 72.1 / 0 / 100% | 72.1 / 0 / 100% |
+| Full load, bare board | 82.2 / 29 / 51.2% | 79.5 / 40 / 50.9% |
+| Burst load, bare board | 83.2 / 8 / 67.4% | 80.4 / 159 / 66.0% |
+
+The learned policy is safe in every case (no kernel throttling, peaks lower than the rule's), but it is **not better yet**. It serves slightly less work, and under 2 s bursts it alternates one OPP. The estimator is not the cause: `tests/test_learn.c` recovers a first-order plant's parameters through 1 C quantization. The cause is the model structure. The package has two time constants (hot spot about 1 s, die and heatsink hundreds of seconds), and one first-order fit cannot represent both. The next step is a two-node model, with the hot-spot offset fitted from power steps. The rule policy remains the default until a learned policy beats it on served work at equal safety.
+
 ## 5. Calibration, when the board arrives
 
 1. Idle the board at a fixed ambient: measure base power and idle temperatures.

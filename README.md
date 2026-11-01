@@ -21,6 +21,8 @@ A feasibility study against the [Linux v7.3](https://github.com/torvalds/linux/t
 
 A VM has no real cpufreq, cpuidle, thermal sensors, Energy Model or big.LITTLE cores. Until an RK3588 board is connected, `lerwatt-sim` provides those through the same kernel files a board exposes, so `lerwattd` runs unchanged on both and switches to real hardware by itself. Simulation results show that the control loop behaves; energy claims need the board and an external power meter. See [docs/SIMULATION.md](docs/SIMULATION.md) for exactly what is simulated.
 
+An experimental learned policy (`lerwattd --policy mpc`) fits the board's thermal model online and plans ceilings from it. In simulation it is safe but not yet better than the rule controller; see [docs/SIMULATION.md](docs/SIMULATION.md).
+
 **A learned advantage is unproven.** Lerwatt must be measured against EAS + schedutil + the power-allocator thermal governor, and against [scx_lavd](https://github.com/sched-ext/scx/tree/main/scheds/rust/scx_lavd)'s power modes, before any claim is made.
 
 ## What Lerwatt decides, and what it never touches

@@ -28,6 +28,12 @@
 #include <stdint.h>
 
 #include "lerwatt/hal.h"
+#include "lerwatt/learn.h"
+
+enum lw_ctl_policy {
+	LW_POLICY_RULE = 0,	/* PI power budget with hysteresis (default) */
+	LW_POLICY_MPC = 1,	/* learned thermal model, predictive ceiling; rule until trained */
+};
 
 struct lw_ctl_params {
 	int32_t soft_limit_mc;		/* default: lowest passive trip - 5 degC */
@@ -42,6 +48,10 @@ struct lw_ctl_params {
 	double min_ceiling_frac;	/* never cap below this share of max frequency */
 	double price_ramp_c;
 	double lat_crit_threshold;	/* 0..1 */
+	enum lw_ctl_policy policy;
+	double mpc_horizon_s;		/* look-ahead of the predictive ceiling */
+	double mpc_margin_c;		/* predicted peak stays this far below the soft limit */
+	uint32_t mpc_up_step_ms;	/* min time between predictive increases */
 };
 
 struct lw_ctl_in {
@@ -54,6 +64,7 @@ struct lw_ctl_in {
 	uint32_t capacity;
 	int32_t deep_idle_latency_us;	/* deepest idle state's latency, -1 if none */
 	double lat_crit;		/* 0..1 from Lertick, <0 when no contract */
+	double other_power_w;		/* estimated CPU power of the other clusters */
 };
 
 struct lw_ctl_state {
@@ -66,6 +77,12 @@ struct lw_ctl_state {
 	uint64_t last_down_ns;
 	uint64_t last_up_ns;
 	uint64_t ceiling_changes;
+	struct lw_thermal_model tm;	/* learned under LW_POLICY_MPC */
+	uint64_t mpc_periods;		/* periods decided by the model */
+	bool mpc_busy_init;
+	double mpc_busy;		/* slow load average for planning */
+	double mpc_work_khz;		/* slow average of busy x frequency */
+	double mpc_other;		/* slow average of the other clusters' power */
 };
 
 struct lw_ctl_out {
@@ -78,6 +95,8 @@ struct lw_ctl_out {
 	int32_t headroom_mc;
 	uint32_t ceiling_cap;
 	uint32_t floor_cap;
+	bool model_ready;
+	double predicted_c;		/* model's temperature at the horizon, NAN if none */
 };
 
 void lw_ctl_default_params(struct lw_ctl_params *p, int32_t lowest_passive_mc);

@@ -9,6 +9,7 @@
 #include <errno.h>
 #include <getopt.h>
 #include <limits.h>
+#include <math.h>
 #include <signal.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -42,6 +43,8 @@ static void usage(FILE *out)
 		"  --telemetry FILE   append one JSON line per period (\"-\" = stdout)\n"
 		"  --dry-run          decide and log, never write kernel knobs\n"
 		"  --no-contract      do not use the Lertick contract maps\n"
+		"  --policy rule|mpc  rule: PI budget (default); mpc: experimental learned\n"
+		"                     thermal model with predictive ceilings\n"
 		"  --describe         print the discovered system and exit\n"
 		"  --restore          write back journaled original values and exit\n");
 }
@@ -90,6 +93,7 @@ int main(int argc, char **argv)
 		{ "telemetry", required_argument, NULL, 't' },
 		{ "dry-run", no_argument, NULL, 'n' },
 		{ "no-contract", no_argument, NULL, 'c' },
+		{ "policy", required_argument, NULL, 'P' },
 		{ "describe", no_argument, NULL, 'D' },
 		{ "restore", no_argument, NULL, 'R' },
 		{ "help", no_argument, NULL, 'h' },
@@ -112,6 +116,8 @@ int main(int argc, char **argv)
 	int opt, ret = 0;
 	bool have_contract = false;
 	uint64_t contract_next_try = 0;
+	enum lw_ctl_policy policy = LW_POLICY_RULE;
+	double est_w[LW_MAX_POLICIES] = { 0 };
 
 	while ((opt = getopt_long(argc, argv, "h", opts, NULL)) != -1) {
 		switch (opt) {
@@ -122,6 +128,13 @@ int main(int argc, char **argv)
 		case 't': telemetry = optarg; break;
 		case 'n': dry_run = true; break;
 		case 'c': use_contract = false; break;
+		case 'P':
+			if (strcmp(optarg, "rule") && strcmp(optarg, "mpc")) {
+				usage(stderr);
+				return 1;
+			}
+			policy = strcmp(optarg, "mpc") ? LW_POLICY_RULE : LW_POLICY_MPC;
+			break;
 		case 'D': describe = true; break;
 		case 'R': restore = true; break;
 		case 'h': usage(stdout); return 0;
@@ -155,6 +168,7 @@ int main(int argc, char **argv)
 		fprintf(stderr, "lerwatt: warning: stale journal could not be fully restored\n");
 
 	lw_ctl_default_params(&params, lowest_passive(&sys));
+	params.policy = policy;
 	if (soft_c > 0)
 		params.soft_limit_mc = (int32_t)(soft_c * 1000.0);
 	fprintf(stderr, "lerwatt: soft limit %.1f degC, period %u ms%s\n",
@@ -223,6 +237,9 @@ int main(int argc, char **argv)
 			};
 			struct lw_ctl_out o;
 
+			for (int j = 0; j < sys.npolicies; j++)
+				if (j != i)
+					in.other_power_w += est_w[j];
 			if (have_contract &&
 			    lw_contract_demand(&contract, (unsigned int)i, s.t_ns,
 					       5ull * period_ms * 1000000ull, &d))
@@ -230,6 +247,7 @@ int main(int argc, char **argv)
 
 			lw_ctl_step(&params, &in, &st[i], &o, s.t_ns, dt > 0 ? dt : period_ms / 1000.0);
 
+			est_w[i] = o.est_power_w;
 			a.max_khz[i] = o.ceiling_khz < p->opps[p->nopps - 1].khz ? o.ceiling_khz : 0;
 			a.min_khz[i] = o.floor_khz;
 			a.resume_latency_us[i] = o.resume_latency_us;
@@ -248,11 +266,12 @@ int main(int argc, char **argv)
 			if (tel)
 				fprintf(tel, "%s{\"id\":%d,\"temp_c\":%.1f,\"busy\":%.3f,\"cur_mhz\":%u,"
 					"\"ceil_mhz\":%u,\"budget_w\":%.3f,\"est_w\":%.3f,\"price\":%u,"
-					"\"floor_mhz\":%u,\"em\":%s}",
+					"\"floor_mhz\":%u,\"em\":%s,\"model\":%s,\"pred_c\":%.1f}",
 					i ? "," : "", i, in.temp_mc == INT32_MIN ? -1.0 : in.temp_mc / 1000.0,
 					in.busy_mean, in.cur_khz / 1000, o.ceiling_khz / 1000, o.budget_w,
 					o.est_power_w, o.price_milli, o.floor_khz / 1000,
-					p->have_em ? "true" : "false");
+					p->have_em ? "true" : "false", o.model_ready ? "true" : "false",
+					isnan(o.predicted_c) ? -1.0 : o.predicted_c);
 		}
 		if (tel) {
 			fprintf(tel, "]}\n");
