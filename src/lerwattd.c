@@ -45,6 +45,7 @@ static void usage(FILE *out)
 		"  --no-contract      do not use the Lertick contract maps\n"
 		"  --policy rule|mpc  rule: PI budget (default); mpc: experimental learned\n"
 		"                     thermal model with predictive ceilings\n"
+		"  --cross-cluster    jointly plan MPC ceilings (requires --policy mpc)\n"
 		"  --describe         print the discovered system and exit\n"
 		"  --restore          write back journaled original values and exit\n");
 }
@@ -94,6 +95,7 @@ int main(int argc, char **argv)
 		{ "dry-run", no_argument, NULL, 'n' },
 		{ "no-contract", no_argument, NULL, 'c' },
 		{ "policy", required_argument, NULL, 'P' },
+		{ "cross-cluster", no_argument, NULL, 'G' },
 		{ "describe", no_argument, NULL, 'D' },
 		{ "restore", no_argument, NULL, 'R' },
 		{ "help", no_argument, NULL, 'h' },
@@ -103,6 +105,7 @@ int main(int argc, char **argv)
 	unsigned int period_ms = 100;
 	double duration_s = 0, soft_c = 0;
 	bool dry_run = false, use_contract = true, describe = false, restore = false;
+	bool cross_cluster = false;
 	static struct lw_system sys;
 	struct lw_ctl_state st[LW_MAX_POLICIES] = { 0 };
 	struct lw_ctl_params params;
@@ -128,6 +131,7 @@ int main(int argc, char **argv)
 		case 't': telemetry = optarg; break;
 		case 'n': dry_run = true; break;
 		case 'c': use_contract = false; break;
+		case 'G': cross_cluster = true; break;
 		case 'P':
 			if (strcmp(optarg, "rule") && strcmp(optarg, "mpc")) {
 				usage(stderr);
@@ -143,6 +147,10 @@ int main(int argc, char **argv)
 	}
 	if (period_ms < 10 || period_ms > 10000) {
 		fprintf(stderr, "lerwatt: --period-ms must be 10..10000\n");
+		return 1;
+	}
+	if (cross_cluster && policy != LW_POLICY_MPC) {
+		fprintf(stderr, "lerwatt: --cross-cluster requires --policy mpc\n");
 		return 1;
 	}
 
@@ -169,6 +177,7 @@ int main(int argc, char **argv)
 
 	lw_ctl_default_params(&params, lowest_passive(&sys));
 	params.policy = policy;
+	params.cross_cluster = cross_cluster;
 	if (policy == LW_POLICY_MPC && sys.package_zone < 0)
 		fprintf(stderr, "lerwatt: no package zone: --policy mpc stays on the rule policy\n");
 	if (soft_c > 0)
@@ -223,6 +232,8 @@ int main(int argc, char **argv)
 				(s.t_ns - start_ns) / 1e9, sys.simulated ? "sim" : "hw", s.power_w,
 				s.power_measured ? "true" : "false");
 
+		struct lw_ctl_in inputs[LW_MAX_POLICIES];
+		struct lw_ctl_out outputs[LW_MAX_POLICIES];
 		for (int i = 0; i < sys.npolicies; i++) {
 			const struct lw_policy *p = &sys.policies[i];
 			struct lt_demand_rec d;
@@ -238,7 +249,6 @@ int main(int argc, char **argv)
 				.lat_crit = -1,
 				.package_mc = sys.package_zone >= 0 ? s.zone_mc[sys.package_zone] : INT32_MIN,
 			};
-			struct lw_ctl_out o;
 
 			for (int j = 0; j < sys.npolicies; j++)
 				if (j != i)
@@ -248,7 +258,14 @@ int main(int argc, char **argv)
 					       5ull * period_ms * 1000000ull, &d))
 				in.lat_crit = d.lat_crit_milli / 1000.0;
 
-			lw_ctl_step(&params, &in, &st[i], &o, s.t_ns, dt > 0 ? dt : period_ms / 1000.0);
+			inputs[i] = in;
+		}
+		lw_ctl_step_group(&params, inputs, st, outputs, sys.npolicies,
+				  s.t_ns, dt > 0 ? dt : period_ms / 1000.0);
+		for (int i = 0; i < sys.npolicies; i++) {
+			const struct lw_policy *p = &sys.policies[i];
+			const struct lw_ctl_in in = inputs[i];
+			const struct lw_ctl_out o = outputs[i];
 
 			est_w[i] = o.est_power_w;
 			a.max_khz[i] = o.ceiling_khz < p->opps[p->nopps - 1].khz ? o.ceiling_khz : 0;
@@ -269,12 +286,14 @@ int main(int argc, char **argv)
 			if (tel)
 				fprintf(tel, "%s{\"id\":%d,\"temp_c\":%.1f,\"busy\":%.3f,\"cur_mhz\":%u,"
 					"\"ceil_mhz\":%u,\"budget_w\":%.3f,\"est_w\":%.3f,\"price\":%u,"
-					"\"floor_mhz\":%u,\"em\":%s,\"model\":%s,\"pred_c\":%.1f}",
+					"\"floor_mhz\":%u,\"em\":%s,\"model\":%s,\"joint\":%s,\"pred_c\":%.1f,\"forecast_c\":%.1f}",
 					i ? "," : "", i, in.temp_mc == INT32_MIN ? -1.0 : in.temp_mc / 1000.0,
 					in.busy_mean, in.cur_khz / 1000, o.ceiling_khz / 1000, o.budget_w,
 					o.est_power_w, o.price_milli, o.floor_khz / 1000,
 					p->have_em ? "true" : "false", o.model_ready ? "true" : "false",
-					isnan(o.predicted_c) ? -1.0 : o.predicted_c);
+					o.joint_active ? "true" : "false",
+					isnan(o.predicted_c) ? -1.0 : o.predicted_c,
+					isnan(o.forecast_c) ? -1.0 : o.forecast_c);
 		}
 		if (tel) {
 			fprintf(tel, "]}\n");

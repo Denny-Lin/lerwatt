@@ -1,121 +1,97 @@
 # Lerwatt — A Self-Learning Power Manager for Linux
 
-Lerwatt is an experimental power manager for Linux. It is designed to learn CPU frequency limits, idle-depth constraints and thermal power budgets, and it cooperates with the [Lertick](https://github.com/Denny-Lin/lertick) sched_ext scheduler so that scheduling and power decisions stop working against each other.
+Lerwatt controls CPU frequency ceilings and idle-latency constraints through standard Linux interfaces. It learns a thermal model online, reports temperature forecasts, and can coordinate with the optional [Lertick](https://github.com/Denny-Lin/lertick) scheduler through shared BPF maps.
 
-[Design](docs/DESIGN.md) · [Simulation](docs/SIMULATION.md) · [Naming](docs/NAMING.md) · [Lertick](https://github.com/Denny-Lin/lertick)
+[![CI](https://github.com/Denny-Lin/lerwatt/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/Denny-Lin/lerwatt/actions)
+[Simulation and results](docs/SIMULATION.md) · [Design](docs/DESIGN.md) · [Naming](docs/NAMING.md)
 
-## Current status
+## What it does
 
-**Phase 1: rule-based controller and RK3588 simulator.** `lerwattd` (the controller) and `lerwatt-sim` (a simulated RK3588 board) build, and their unit, closed-loop and end-to-end tests pass. The default policy is rule-based, and an experimental learned policy is available. `lerwattd` and `lerwatt-sim` have run with Lertick's `--lerwatt` plug-in in an ARM64 VM with one active cluster. Nothing has run on real hardware.
+- Controls cluster frequency floors and ceilings using cpufreq, and idle latency using PM QoS.
+- Uses a rule controller by default, with an optional learned model-predictive controller (`--policy mpc`).
+- With `--policy mpc`, learns package heating, cooling and cluster hot-spot response while running; no offline training file is required.
+- Exposes a five-second temperature point forecast separately from the planner's thermal prediction.
+- Can search for a joint frequency allocation across clusters with `--policy mpc --cross-cluster`.
+- Saves original settings before changing them and restores them on exit or with `--restore` after a crash.
+- Runs independently of Lertick. With Lertick's `--lerwatt` flag, exchanges demand, ceilings and energy prices through real BPF maps.
 
-The first platform is ARM64, modeled on an RK3588 board. The hardware layer reads and writes only standard Linux interfaces (cpufreq, cpuidle, thermal, hwmon), so `lerwattd` is not tied to ARM64; simulating another board means adding a platform description to `sim/`.
+The first supported simulation profile is an ARM64 RK3588 with four A55 cores and two pairs of A76 cores. The controller itself uses Linux interfaces rather than platform-specific register access.
 
-A feasibility study against the [Linux v7.3](https://github.com/torvalds/linux/tree/v7.3) source concluded that a two-controller prototype can be built on upstream interfaces without kernel patches, after four corrections to the original idea:
+## Build
 
-| Original idea | What Linux v7.3 actually does | Lerwatt design |
-| --- | --- | --- |
-| The power AI picks each CPU's frequency | When sched_ext runs every task, schedutil takes the BPF scheduler's `scx_bpf_cpuperf_set()` target as its input | Lertick supplies per-event performance demand in BPF; Lerwatt sets floors, ceilings, budgets and energy prices |
-| The power AI picks voltages | The OPP core couples voltage to frequency; on SCMI and Qualcomm hardware DVFS, firmware owns voltage | Lerwatt selects operating points (frequencies) only and never touches regulators |
-| The power AI picks idle states | menu/teo choose a state on every idle entry, within microseconds | Lerwatt sets latency limits and disables states; per-entry selection stays in the kernel |
-| The power AI replaces thermal management | The thermal core handles critical trips; hardware throttling reports `hw_pressure` | Lerwatt replaces budget-allocation policy (for example IPA) and keeps every safety path |
-
-A VM has no real cpufreq, cpuidle, thermal sensors, Energy Model or big.LITTLE cores. Until an RK3588 board is connected, `lerwatt-sim` provides those through the same kernel files a board exposes, so `lerwattd` runs unchanged on both and switches to real hardware by itself. Simulation results show that the control loop behaves; energy claims need the board and an external power meter. See [docs/SIMULATION.md](docs/SIMULATION.md) for exactly what is simulated.
-
-An experimental learned policy (`lerwattd --policy mpc`) fits a two-node thermal model online and plans ceilings from it. In simulation it is safe and usually moves ceilings less often than the rule controller, but it serves less work under bursts, so the rule controller stays the default; see [docs/SIMULATION.md](docs/SIMULATION.md).
-
-**A learned advantage is unproven.** Lerwatt must be measured against EAS + schedutil + the power-allocator thermal governor, and against [scx_lavd](https://github.com/sched-ext/scx/tree/main/scheds/rust/scx_lavd)'s power modes, before any claim is made.
-
-## What Lerwatt decides, and what it never touches
-
-| Decision | Owner | Interface in Linux v7.3 |
-| --- | --- | --- |
-| Per-event performance demand | Lertick (BPF) | `scx_bpf_cpuperf_set()` into schedutil |
-| Task placement across big and LITTLE cores | Lertick (BPF) | sched_ext `select_cpu` and `dispatch` |
-| Frequency floor and ceiling per cluster | Lerwatt | `scaling_min_freq` / `scaling_max_freq` (frequency QoS) |
-| Power budget per cluster | Lerwatt | Ceilings derived from the Energy Model, as DTPM does |
-| Idle depth | Lerwatt | `power/pm_qos_resume_latency_us`, `cpuidle/stateN/disable` |
-| Energy-performance preference | Lerwatt | `energy_performance_preference` where the driver supports it |
-| Thermal power budget | Lerwatt | Its own budget below the kernel's passive trips |
-| Voltage | Nobody | OPP core and firmware only |
-| Critical trips and hardware throttling | Kernel and hardware | Unchanged |
-
-## Architecture
-
-```mermaid
-flowchart LR
-    subgraph U["Userspace"]
-        LW["Lerwatt daemon<br/>every 100 ms to 1 s"]
-        LT["Lertick loader"]
-    end
-    subgraph K["Linux kernel"]
-        BPF["Lertick sched_ext BPF<br/>every scheduling event"]
-        MAP[("Contract maps<br/>budgets, prices, demand")]
-        SU["schedutil and cpufreq driver"]
-        QOS["freq QoS and PM QoS"]
-        IDLE["cpuidle menu / teo"]
-        TH["thermal core<br/>critical trips"]
-    end
-    HW["ARM64 SoC<br/>OPPs, firmware, sensors"]
-    LW -- "ceilings, prices, headroom" --> MAP
-    MAP -- "demand forecasts" --> LW
-    BPF <--> MAP
-    BPF -- "scx_bpf_cpuperf_set()" --> SU
-    LW -- "sysfs writes" --> QOS
-    QOS --> SU
-    QOS --> IDLE
-    SU --> HW
-    IDLE --> HW
-    HW -- "temperature, hw_pressure" --> TH
-    HW -- "temperature, energy" --> LW
-    LT -.-> BPF
-```
-
-The two controllers run on separate timescales. Lertick acts on every scheduling event inside BPF. Lerwatt runs a 100 ms to 1 s control loop in userspace. They coordinate through prices rather than commands: Lerwatt raises a cluster's energy price when it exceeds its power or thermal budget, and Lertick includes that price in placement and performance decisions. See [docs/DESIGN.md](docs/DESIGN.md).
-
-## Quick start
+Use Linux with a C11 compiler and Make:
 
 ```sh
-make            # build/lerwattd and build/lerwatt-sim
-make test       # model unit tests and the 900 s closed-loop scenarios
-make e2e        # simulator + controller through files, restore and crash recovery
-
-# In the VM: a simulated board driven by the VM's real load, then the controller.
-sudo build/lerwatt-sim --load procstat --cooling passive &
-sudo build/lerwattd --telemetry lerwatt.jsonl
-
-# On a real board: the same controller command. It finds /sys by itself.
-sudo build/lerwattd --describe
+git clone https://github.com/Denny-Lin/lerwatt.git
+cd lerwatt
+make
+make test
+make e2e
 ```
 
-| Path | Role |
-| --- | --- |
-| `include/lerwatt/contract.h` | Lerwatt <-> Lertick shared-map layout, the only shared ABI |
-| `include/lerwatt/hal.h`, `src/hal_*.c` | Real-machine interface: discovery, sampling, writes, restore journal |
-| `include/lerwatt/controller.h`, `src/controller.c` | Pure control law, no I/O |
-| `include/lerwatt/learn.h`, `src/learn.c` | Online two-node thermal model for `--policy mpc` |
-| `src/lerwattd.c` | The daemon |
-| `sim/` | The simulator: RK3588 data, physics, kernel-policy emulation, fake ABI, load sources |
-| `tests/` | Model tests, closed-loop tests, end-to-end script |
+`lerwattd` and `lerwatt-sim` require Linux. The model, forecast, controller and closed-loop tests also run on macOS. No simulator object is linked into the daemon.
 
-## Roadmap
+## Try the simulated board
 
-| Phase | Goal | Exit criterion |
-| --- | --- | --- |
-| 0 | Research and design | Feasibility study and this design (done) |
-| 1 | Simulator and rule-based Lerwatt (in progress) | Done: simulator, controller, contract layout, tests, and a VM run with Lertick publishing `lt_demand` and reading `lw_contract`. Next: run all three simulated clusters with `-smp 8` |
-| 2 | Hardware bring-up and baselines | RK3588 with a mainline kernel and `CONFIG_SCHED_CLASS_EXT=y`, energy measured externally, simulator calibrated, EEVDF + schedutil and scx_lavd baselines reproduced |
-| 3 | Learned Lerwatt (started) | Contextual bandit or MPC with a learned thermal and power model, inside a fixed safety envelope. It becomes the default only after beating the rule policy on both work and stability at equal safety |
-| 4 | Five-way evaluation | Baseline, each controller alone, both without cooperation, both with cooperation |
-| 5 | Release and upstream discussion | Reproducible results; proposals only for interfaces that proved necessary |
+In one Linux terminal, start the board. Eight vCPUs are needed to exercise all simulated CPUs with the default mapping:
 
-## Safety
+```sh
+sudo build/lerwatt-sim --load procstat --cooling passive
+```
 
-- Lerwatt writes only reversible settings: frequency floors and ceilings and resume-latency limits. It journals each original value before the first write, never loosens a limit it found in place, and restores everything on exit. After a crash, `lerwattd --restore` (or the next start) puts the values back.
-- It never writes regulators, never changes trip temperatures and never disables a thermal zone.
-- If Lerwatt stops, the kernel's own policies take over again. If Lertick stops, sched_ext falls back to the fair class and schedutil returns to fair-class utilization.
+In another terminal, inspect it and start the controller:
 
-Run experiments on a board you can power-cycle, with a serial console.
+```sh
+sudo build/lerwattd --describe
+sudo build/lerwattd --telemetry lerwatt.jsonl
+```
+
+The daemon discovers real cpufreq hardware first, then a running simulator at `$LERWATT_SIM_ROOT` or `/run/lerwatt-sim`. Use `--sysroot DIR` to select an explicit simulator tree. Stop the daemon with Ctrl-C before stopping the simulator so it can restore the knobs. A stopped simulator can restart at the same path without `--force`.
+
+To use learned predictions, replace the daemon command with:
+
+```sh
+sudo build/lerwattd --policy mpc --telemetry lerwatt-mpc.jsonl
+```
+
+Optional joint planning:
+
+```sh
+sudo build/lerwattd --policy mpc --cross-cluster --telemetry lerwatt-joint.jsonl
+```
+
+MPC uses the rule controller while its model trains. It needs at least about 90 seconds of suitable observations; a hot start or insufficient load variation can take longer. Joint search requires trained models, package and cluster sensors, Energy Models and a bounded number of OPP combinations; otherwise independent control continues. `forecast_c` is an expected temperature five seconds ahead, while `pred_c` is the planner's prediction. A value of `-1` means unavailable. Prediction error is evaluated against future measurements, not inferred from work served.
+
+On a real board, use the same daemon commands without starting the simulator. No real-board results have been recorded yet.
+
+## Use with Lertick
+
+Build and start [Lertick](https://github.com/Denny-Lin/lertick) on the same Linux machine:
+
+```sh
+sudo build/scx_lertick --lerwatt --track-all --duration 120
+```
+
+Both controllers may start independently. The daemon retries when the contract is absent; Lertick ignores expired records. Three-cluster operation and standalone scheduler operation have been verified in an eight-vCPU ARM64 VM. See the [VM validation](https://github.com/Denny-Lin/lertick/blob/main/docs/LERWATT_VM_VALIDATION.md).
+
+## Results and limits
+
+The rule, independent MPC and joint MPC paths are tested at the same temperature settings. A shared raw-temperature guard reacts before filtered control, including during startup. All three keep the kernel's own passive and critical trips enabled.
+
+**The rule controller remains the default.** Joint MPC does not consistently improve both work served and frequency-ceiling stability. Forecast accuracy is also workload-dependent: the model improves some burst forecasts but does not consistently beat persistence. Full comparisons, regressions and reproduction commands are in [Simulation](docs/SIMULATION.md).
+
+The ARM64 VM runs real Linux scheduling, daemon code and BPF maps. Frequencies, power and thermals are simulated; VM task latency does not represent the simulated board. These results do not establish hardware energy savings or production safety. Real-hardware calibration and measurement are still required.
+
+## Recovery
+
+After a controller crash, restore the journaled values against the same board or simulator root:
+
+```sh
+sudo build/lerwattd --restore
+```
+
+Lerwatt changes reversible cpufreq and PM QoS settings. It never writes voltages, raises thermal trip temperatures or disables thermal zones. If Lertick stops, Linux restores its default scheduler independently.
 
 ## License
 
-Code and documents use the [MIT License](LICENSE). Any BPF programs will be GPL-2.0-only, as Lertick's are.
+Code and documents use the [MIT License](LICENSE).

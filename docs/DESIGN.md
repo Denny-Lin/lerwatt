@@ -1,6 +1,13 @@
 # Lerwatt design
 
-Status: **2026-11-01.** The contract layout (section 3), the rule-based controller (section 4) and the safety envelope (section 5) are implemented and run against the simulator ([SIMULATION.md](SIMULATION.md)). Learning, Lertick's side of the contract and any hardware run are not done yet. Source references point to the [Linux v7.3 tag](https://github.com/torvalds/linux/tree/v7.3) and to [sched-ext/scx](https://github.com/sched-ext/scx) as of 2026-10-30.
+Status: **2026-11-01.** The rule controller, online two-node thermal model,
+point forecasts, optional joint MPC, restore journal and Lertick shared-map
+contract are implemented. Both independent operation and three-cluster
+coordination have been exercised in an eight-vCPU ARM64 VM. Frequencies,
+power and temperature are simulated; real-board behavior remains unverified.
+See [Simulation](SIMULATION.md) for the current measurements and regressions.
+The source study below refers to the [Linux v7.3 tag](https://github.com/torvalds/linux/tree/v7.3)
+and [sched-ext/scx](https://github.com/sched-ext/scx) as of 2026-10-30.
 
 Labels: **[upstream]** = present in Linux v7.3; **[RFC]** = posted to a mailing list, not merged; **[proposal]** = Lerwatt design, not yet tested.
 
@@ -25,13 +32,13 @@ Linux spreads CPU power policy across schedutil, EAS, cpuidle governors, thermal
 | | Lertick (scheduling) | Lerwatt (power) |
 | --- | --- | --- |
 | Runs in | sched_ext BPF, with a userspace loader | Userspace daemon |
-| Period | Every scheduling event; model updates per completed burst | 100 ms control loop; budgets re-planned every 1 s |
-| Decides | Placement, slices, per-CPU `cpuperf` target | Per-cluster ceilings and floors, energy prices, idle-latency limits, EPP |
+| Period | Every scheduling event; model updates per completed burst | 100 ms control loop; joint allocations held for 120 s |
+| Decides | Placement, slices, per-CPU `cpuperf` target | Per-cluster ceilings and floors, energy prices and idle-latency limits |
 | Observes | Task bursts, queue depth, wake latency | Temperatures, measured energy, frequency residency, Lertick's demand forecast |
 
 The 10× to 100× separation is deliberate. Lerwatt sees Lertick's behaviour as a fast inner loop that has already settled, and Lertick sees Lerwatt's prices as constants between updates. This is the standard condition for stable hierarchical control, and it keeps the two learners from chasing each other.
 
-## 3. The contract [proposal]
+## 3. The implemented contract
 
 Lertick owns two pinned BPF array maps under `/sys/fs/bpf/lertick/`. Both are created with `BPF_F_MMAPABLE` so Lerwatt reads and writes them through `mmap()` without system calls on the hot path. A sequence counter guards each record.
 
@@ -42,8 +49,8 @@ Lertick owns two pinned BPF array maps under `/sys/fs/bpf/lertick/`. Both are cr
 | `seq` | Even when stable, odd while being written |
 | `ceiling_cap` | Highest capacity Lertick may request on this cluster (0–1024 scale) |
 | `floor_cap` | Lowest capacity to request while latency-critical work runs |
-| `energy_price` | Cost per unit of capacity, fixed-point; rises when the cluster is over budget |
-| `thermal_headroom` | Degrees below Lerwatt's own soft limit |
+| `energy_price_milli` | Cost per unit of capacity, fixed-point; rises when the cluster is over budget |
+| `thermal_headroom_mc` | Degrees below Lerwatt's own soft limit |
 | `valid_until_ns` | Lertick ignores the record after this time and falls back to defaults |
 
 **`lt_demand` (written by Lertick, read by Lerwatt each period), one record per cluster:**
@@ -51,24 +58,38 @@ Lertick owns two pinned BPF array maps under `/sys/fs/bpf/lertick/`. Both are cr
 | Field | Meaning |
 | --- | --- |
 | `seq` | As above |
-| `pred_util` | Predicted utilization for the next 100 ms |
-| `lat_crit_load` | Share of demand from latency-critical tasks |
-| `requested_cap` | Mean `cpuperf` target Lertick set in the last period |
+| `pred_util` | Aggregated cluster demand estimate, refreshed every 100 ms |
+| `lat_crit_milli` | Share of demand from latency-critical tasks |
+| `cpuperf_max`, `cpuperf_mean` | Maximum and mean targets published for the cluster |
 | `p99_wake_ns` | Recent wake-latency estimate |
 
-Coordination follows dual decomposition. Lertick minimizes latency cost plus `energy_price × energy` within each cluster's ceiling. Lerwatt adjusts `energy_price` by the gap between measured and budgeted power, and lowers `ceiling_cap` only when the price alone fails to hold the budget. Commands flow one way per field, so the two controllers never write the same knob.
+Lertick applies the energy price, floor and ceiling to its performance targets. Lerwatt publishes those limits and reads demand and latency-critical load. Fields have one writer each. Price-aware task placement is not implemented; CPU selection retains Lertick's existing policy.
 
 ## 4. Algorithms
 
-**Lertick side.** Keep the existing per-task burst predictor. Add capacity-aware placement and a per-CPU `cpuperf` target computed from predicted demand, the contract ceiling and the energy price. The BPF verifier forbids floating point, so all arithmetic stays fixed-point, as Lertick's Q16 model already is.
+**Lertick.** The per-task Q16 burst predictor trains inside BPF. Bounded
+predictions choose slices; separate utilization tracking, energy prices and
+contract limits determine performance targets. Fairness accounting and CPU
+selection remain separate from the burst predictor.
 
-**Lerwatt, rule-based (implemented in `src/controller.c`).** A budget controller with hysteresis: a thermal model fitted offline (first-order RC per cluster), an Energy-Model power estimate corrected by measured energy, and a PI loop on the price. This is the baseline any learned version must beat.
+**Rule control.** A PI budget uses Energy-Model power estimates and filtered
+temperature, with discrete OPP hysteresis and slower recovery than descent.
+A raw-temperature guard bypasses that delay when the sensor reaches the
+passive trip minus 3 C.
 
-**Lerwatt, Phase 3 (learning).** A contextual bandit chooses among a small set of safe ceiling and idle-limit profiles per period; the context is temperature, headroom and Lertick's forecast. A model-predictive variant plans over the learned thermal model. Two independent reinforcement-learning agents are not planned: they face a non-stationary environment created by each other. If reinforcement learning is used later, it will be trained centrally with a shared reward and executed separately, with the contract fields as the only shared state.
+**Learned control.** `--policy mpc` fits package heating and cooling with
+recursive least squares and learns a cluster hot-spot offset. Five-second
+point forecasts are measured against future observations; they are distinct
+from conservative planning predictions. `--cross-cluster` searches a bounded
+product of discovered OPPs using all cluster models and total package power,
+then holds an allocation for its planning horizon. Untrained or unsupported
+systems keep independent rule/MPC control. Neither learning nor coordination
+is enabled by default because the recorded comparisons do not establish a
+consistent benefit in work and stability.
 
 **Shared objective for evaluation:** energy-delay product, subject to a p99 latency target and a temperature limit.
 
-## 5. Safety envelope and fallback [proposal]
+## 5. Safety envelope and fallback
 
 1. Allowed writes: `scaling_min_freq`, `scaling_max_freq`, `energy_performance_preference`, `power/pm_qos_resume_latency_us`, `cpuidle/stateN/disable`, and the contract map. Nothing else. The current code uses the first two cpufreq knobs, the resume-latency knob and the contract; it never loosens a limit it found in place.
 2. Every written value is clamped to the hardware range and to a configured minimum performance floor.

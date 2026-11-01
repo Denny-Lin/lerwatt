@@ -45,6 +45,9 @@ struct lw_thermal_model {
 	double offset_avg_c, power_avg_w;	/* long averages behind r */
 	double hot_s;			/* time those averages cover */
 	double peak_offset_c, peak_power_w;	/* decaying peaks behind peak_gain */
+	double forecast_own_w, forecast_total_w; /* causal load means for point forecasts */
+	double last_own_w, last_total_w, load_reversals;
+	int load_direction;
 };
 
 void lw_tm_init(struct lw_thermal_model *m);
@@ -62,5 +65,8 @@ double lw_tm_package_steady(const struct lw_thermal_model *m, double p_total_w);
 double lw_tm_offset(const struct lw_thermal_model *m, double p_own_w);
 /* Hot-spot peak above the package for bursts drawing p_own_w. */
 double lw_tm_peak_offset(const struct lw_thermal_model *m, double p_own_w);
+/* Expected temperature using causal load history, not a safety upper bound. */
+double lw_tm_forecast_package(const struct lw_thermal_model *m, double pkg_c, double horizon_s);
+double lw_tm_forecast_hot(const struct lw_thermal_model *m, double pkg_c, double horizon_s);
 
 #endif /* LERWATT_LEARN_H */

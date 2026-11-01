@@ -1,0 +1,75 @@
+| scenario               | controller | peak C | s >85C  | kernel | ceil   | freq     | mean W  | served  |
+|------------------------|------------|--------|---------|--------|--------|----------|---------|---------|
+| full load, passive     | off        |   84.1 |     0.0 |      0 |      0 |       16 |   10.61 |  69.38% |
+| full load, passive     | rule       |   81.3 |     0.0 |      0 |      2 |       18 |   10.48 |  68.43% |
+| full load, passive     | learned    |   81.3 |     0.0 |      0 |      5 |       21 |   10.43 |  68.44% |
+| big-core load, passive | off        |   72.1 |     0.0 |      0 |      0 |       12 |    8.76 |  99.99% |
+| big-core load, passive | rule       |   72.1 |     0.0 |      0 |      0 |       12 |    8.76 |  99.99% |
+| big-core load, passive | learned    |   72.1 |     0.0 |      0 |      1 |       12 |    8.76 |  99.99% |
+| full load, bare board  | off        |   94.8 |  2293.3 |   5228 |      0 |    10462 |    8.17 |  53.44% |
+| full load, bare board  | rule       |   81.3 |     0.0 |      0 |     11 |       27 |    7.49 |  51.04% |
+| full load, bare board  | learned    |   81.3 |     0.0 |      0 |      8 |       24 |    7.44 |  50.89% |
+| burst load, bare board | off        |   85.9 |    11.5 |     93 |      0 |     6381 |    6.88 |  68.85% |
+| burst load, bare board | rule       |   82.2 |     0.0 |      0 |     42 |     5839 |    6.64 |  66.43% |
+| burst load, bare board | learned    |   79.5 |     0.0 |      0 |      8 |     5702 |    6.54 |  65.56% |
+
+| held-out case          | rule: peak / moves / served | learned: peak / moves / served |
+|------------------------|-----------------------------|--------------------------------|
+| full passive, seed 7   |  81.3 /    2 /  68.44%      |  81.3 /    2 /  68.19%         |
+| full bare, seed 7      |  81.3 /   10 /  51.04%      |  81.3 /   10 /  50.89%         |
+| burst bare, seed 7     |  82.2 /   39 /  66.51%      |  79.5 /    9 /  65.96%         |
+| burst bare, seed 99    |  82.2 /   38 /  66.62%      |  79.5 /    8 /  65.75%         |
+| full passive, 35 C     |  82.2 /   41 /  62.60%      |  81.3 /    7 /  62.97%         |
+| full bare, 35 C        |  82.2 /   21 /  44.77%      |  81.3 /   20 /  44.37%         |
+| burst bare, 35 C       |  82.2 /  151 /  59.24%      |  79.5 /   12 /  58.95%         |
+| full bare, 15 C        |  81.3 /   32 /  55.73%      |  80.4 /    6 /  55.13%         |
+| full passive, warm 60  |  81.3 /    2 /  67.18%      |  81.3 /    6 /  66.85%         |
+| full bare, warm 70     |  82.2 /   51 /  48.98%      |  82.2 /   21 /  47.98%         |
+| burst bare, warm 70    |  82.2 /   61 /  65.23%      |  81.3 /   15 /  64.76%         |
+| 10 s bursts, bare      |  82.2 /  110 /  66.05%      |  77.6 /    8 /  64.50%         |
+| 300 ms bursts, bare    |  69.3 /    0 /  58.03%      |  69.3 /    0 /  58.03%         |
+| 10 s bursts, passive   |  60.1 /    0 /  70.46%      |  60.1 /    0 /  70.46%         |
+| load steps, bare       |  82.2 /   31 /  69.42%      |  81.3 /   15 /  68.30%         |
+| load steps, passive    |  69.3 /    0 /  79.25%      |  61.0 /   18 /  73.56%         |
+| one cluster, bare      |  76.7 /    0 /  99.99%      |  76.7 /    2 /  99.99%         |
+| full, fan              |  52.7 /    0 /  69.38%      |  52.7 /    0 /  69.38%         |
+| burst, fan, 35 C       |  52.7 /    0 /  68.92%      |  52.7 /    0 /  68.92%         |
+
+peak C: hottest passive zone after 300 s. kernel: step_wise throttle steps. ceil: Lerwatt ceiling moves. served: share of demanded work done.
+hot start cooling=0 policy=0 seed=42 full: peak 83.2 C, 0 throttle steps
+hot start cooling=0 policy=0 seed=42 burst: peak 83.2 C, 0 throttle steps
+hot start cooling=0 policy=0 seed=7 full: peak 83.2 C, 0 throttle steps
+hot start cooling=0 policy=0 seed=7 burst: peak 83.2 C, 0 throttle steps
+hot start cooling=0 policy=0 seed=99 full: peak 83.2 C, 0 throttle steps
+hot start cooling=0 policy=0 seed=99 burst: peak 83.2 C, 0 throttle steps
+hot start cooling=0 policy=1 seed=42 full: peak 83.2 C, 0 throttle steps
+hot start cooling=0 policy=1 seed=42 burst: peak 83.2 C, 0 throttle steps
+hot start cooling=0 policy=1 seed=7 full: peak 83.2 C, 0 throttle steps
+hot start cooling=0 policy=1 seed=7 burst: peak 83.2 C, 0 throttle steps
+hot start cooling=0 policy=1 seed=99 full: peak 83.2 C, 0 throttle steps
+hot start cooling=0 policy=1 seed=99 burst: peak 83.2 C, 0 throttle steps
+hot start cooling=1 policy=0 seed=42 full: peak 82.2 C, 0 throttle steps
+hot start cooling=1 policy=0 seed=42 burst: peak 82.2 C, 0 throttle steps
+hot start cooling=1 policy=0 seed=7 full: peak 83.2 C, 0 throttle steps
+hot start cooling=1 policy=0 seed=7 burst: peak 83.2 C, 0 throttle steps
+hot start cooling=1 policy=0 seed=99 full: peak 83.2 C, 0 throttle steps
+hot start cooling=1 policy=0 seed=99 burst: peak 83.2 C, 0 throttle steps
+hot start cooling=1 policy=1 seed=42 full: peak 82.2 C, 0 throttle steps
+hot start cooling=1 policy=1 seed=42 burst: peak 82.2 C, 0 throttle steps
+hot start cooling=1 policy=1 seed=7 full: peak 83.2 C, 0 throttle steps
+hot start cooling=1 policy=1 seed=7 burst: peak 83.2 C, 0 throttle steps
+hot start cooling=1 policy=1 seed=99 full: peak 83.2 C, 0 throttle steps
+hot start cooling=1 policy=1 seed=99 burst: peak 83.2 C, 0 throttle steps
+hot start cooling=2 policy=0 seed=42 full: peak 83.2 C, 0 throttle steps
+hot start cooling=2 policy=0 seed=42 burst: peak 83.2 C, 0 throttle steps
+hot start cooling=2 policy=0 seed=7 full: peak 83.2 C, 0 throttle steps
+hot start cooling=2 policy=0 seed=7 burst: peak 83.2 C, 0 throttle steps
+hot start cooling=2 policy=0 seed=99 full: peak 83.2 C, 0 throttle steps
+hot start cooling=2 policy=0 seed=99 burst: peak 83.2 C, 0 throttle steps
+hot start cooling=2 policy=1 seed=42 full: peak 83.2 C, 0 throttle steps
+hot start cooling=2 policy=1 seed=42 burst: peak 83.2 C, 0 throttle steps
+hot start cooling=2 policy=1 seed=7 full: peak 83.2 C, 0 throttle steps
+hot start cooling=2 policy=1 seed=7 burst: peak 83.2 C, 0 throttle steps
+hot start cooling=2 policy=1 seed=99 full: peak 83.2 C, 0 throttle steps
+hot start cooling=2 policy=1 seed=99 burst: peak 83.2 C, 0 throttle steps
+test_closed_loop: all checks passed

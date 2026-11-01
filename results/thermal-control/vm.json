@@ -1,0 +1,422 @@
+[
+  {
+    "case": "hot-rule-8cpu",
+    "evidence_path": "/var/tmp/lerwatt-verification-_9t581k8/hot-rule-8cpu",
+    "cpus": 8,
+    "initial_c": 79,
+    "cooling": "bare",
+    "ambient_c": 25,
+    "elapsed_s": 25.801,
+    "first_joint_s": null,
+    "joint_periods": 0,
+    "final_contract_stale": 2994,
+    "final_contract_applied": 221094,
+    "topology": {
+      "source": "sim",
+      "root": "/var/tmp/lerwatt-verification-_9t581k8/hot-rule-8cpu/root",
+      "policies": 3,
+      "clusters": [
+        [
+          0,
+          1,
+          2,
+          3
+        ],
+        [
+          4,
+          5
+        ],
+        [
+          6,
+          7
+        ]
+      ],
+      "capacity_override": [
+        397,
+        397,
+        397,
+        397,
+        1024,
+        1024,
+        1024,
+        1024
+      ]
+    },
+    "exit": {
+      "event": "exit",
+      "unexpected_fallback": false,
+      "watchdog_observed": false,
+      "exit_kind": 64,
+      "exit_code": 0,
+      "reason": "unregistered from user space",
+      "message": "",
+      "default_restored": true,
+      "signal": 0,
+      "status": 0
+    },
+    "simulator_summary": "lerwatt-sim: 25.8 s simulated in 25.9 s: energy 153.1 J (mean 5.93 W), work served 37.6%, 0 throttle steps, peak 83.2 / 83.2 / 82.2 C (big0 / big1 / little), 0 bad writes",
+    "controller_summary": "lerwatt: stopped after 25.8 s, 6 writes, 0 write errors",
+    "lw_contract": [
+      {
+        "key": 0,
+        "value": {
+          "seq": 154,
+          "version": 1,
+          "ceiling_cap": 222,
+          "floor_cap": 0,
+          "energy_price_milli": 892,
+          "thermal_headroom_mc": 539,
+          "valid_until_ns": 1328377090948
+        }
+      },
+      {
+        "key": 1,
+        "value": {
+          "seq": 154,
+          "version": 1,
+          "ceiling_cap": 512,
+          "floor_cap": 0,
+          "energy_price_milli": 892,
+          "thermal_headroom_mc": 539,
+          "valid_until_ns": 1328377090948
+        }
+      },
+      {
+        "key": 2,
+        "value": {
+          "seq": 154,
+          "version": 1,
+          "ceiling_cap": 512,
+          "floor_cap": 0,
+          "energy_price_milli": 892,
+          "thermal_headroom_mc": 539,
+          "valid_until_ns": 1328377090948
+        }
+      }
+    ],
+    "lt_demand": [
+      {
+        "key": 0,
+        "value": {
+          "seq": 160,
+          "version": 1,
+          "pred_util": 395,
+          "cpuperf_max": 222,
+          "cpuperf_mean": 222,
+          "lat_crit_milli": 4,
+          "p99_wake_ns": 2097152,
+          "updated_ns": 1328140112199,
+          "reserved": 0
+        }
+      },
+      {
+        "key": 1,
+        "value": {
+          "seq": 160,
+          "version": 1,
+          "pred_util": 1021,
+          "cpuperf_max": 512,
+          "cpuperf_mean": 512,
+          "lat_crit_milli": 4,
+          "p99_wake_ns": 1048576,
+          "updated_ns": 1328140112199,
+          "reserved": 0
+        }
+      },
+      {
+        "key": 2,
+        "value": {
+          "seq": 160,
+          "version": 1,
+          "pred_util": 1021,
+          "cpuperf_max": 512,
+          "cpuperf_mean": 512,
+          "lat_crit_milli": 3,
+          "p99_wake_ns": 1048576,
+          "updated_ns": 1328140112199,
+          "reserved": 0
+        }
+      }
+    ]
+  },
+  {
+    "case": "hot-joint-8cpu",
+    "evidence_path": "/var/tmp/lerwatt-verification-_9t581k8/hot-joint-8cpu",
+    "cpus": 8,
+    "initial_c": 79,
+    "cooling": "bare",
+    "ambient_c": 25,
+    "elapsed_s": 141.2,
+    "first_joint_s": null,
+    "joint_periods": 0,
+    "final_contract_stale": 3371,
+    "final_contract_applied": 1249145,
+    "topology": {
+      "source": "sim",
+      "root": "/var/tmp/lerwatt-verification-_9t581k8/hot-joint-8cpu/root",
+      "policies": 3,
+      "clusters": [
+        [
+          0,
+          1,
+          2,
+          3
+        ],
+        [
+          4,
+          5
+        ],
+        [
+          6,
+          7
+        ]
+      ],
+      "capacity_override": [
+        397,
+        397,
+        397,
+        397,
+        1024,
+        1024,
+        1024,
+        1024
+      ]
+    },
+    "exit": {
+      "event": "exit",
+      "unexpected_fallback": false,
+      "watchdog_observed": false,
+      "exit_kind": 64,
+      "exit_code": 0,
+      "reason": "unregistered from user space",
+      "message": "",
+      "default_restored": true,
+      "signal": 0,
+      "status": 0
+    },
+    "simulator_summary": "lerwatt-sim: 141.0 s simulated in 141.2 s: energy 981.2 J (mean 6.96 W), work served 47.0%, 0 throttle steps, peak 82.2 / 83.2 / 82.2 C (big0 / big1 / little), 0 bad writes",
+    "controller_summary": "lerwatt: stopped after 141.2 s, 20 writes, 0 write errors",
+    "lw_contract": [
+      {
+        "key": 0,
+        "value": {
+          "seq": 1994,
+          "version": 1,
+          "ceiling_cap": 354,
+          "floor_cap": 0,
+          "energy_price_milli": 892,
+          "thermal_headroom_mc": 539,
+          "valid_until_ns": 1446249236835
+        }
+      },
+      {
+        "key": 1,
+        "value": {
+          "seq": 1994,
+          "version": 1,
+          "ceiling_cap": 686,
+          "floor_cap": 0,
+          "energy_price_milli": 892,
+          "thermal_headroom_mc": 539,
+          "valid_until_ns": 1446249236835
+        }
+      },
+      {
+        "key": 2,
+        "value": {
+          "seq": 1994,
+          "version": 1,
+          "ceiling_cap": 686,
+          "floor_cap": 0,
+          "energy_price_milli": 892,
+          "thermal_headroom_mc": 539,
+          "valid_until_ns": 1446249236835
+        }
+      }
+    ],
+    "lt_demand": [
+      {
+        "key": 0,
+        "value": {
+          "seq": 1978,
+          "version": 1,
+          "pred_util": 395,
+          "cpuperf_max": 325,
+          "cpuperf_mean": 324,
+          "lat_crit_milli": 6,
+          "p99_wake_ns": 1048576,
+          "updated_ns": 1445998886870,
+          "reserved": 0
+        }
+      },
+      {
+        "key": 1,
+        "value": {
+          "seq": 1978,
+          "version": 1,
+          "pred_util": 1021,
+          "cpuperf_max": 686,
+          "cpuperf_mean": 686,
+          "lat_crit_milli": 8,
+          "p99_wake_ns": 1048576,
+          "updated_ns": 1445998886870,
+          "reserved": 0
+        }
+      },
+      {
+        "key": 2,
+        "value": {
+          "seq": 1978,
+          "version": 1,
+          "pred_util": 1021,
+          "cpuperf_max": 686,
+          "cpuperf_mean": 686,
+          "lat_crit_milli": 7,
+          "p99_wake_ns": 1048576,
+          "updated_ns": 1445998886870,
+          "reserved": 0
+        }
+      }
+    ]
+  },
+  {
+    "case": "cold-joint-8cpu",
+    "evidence_path": "/var/tmp/lerwatt-verification-evqbgqyq/cold-joint-8cpu",
+    "cpus": 8,
+    "initial_c": 25,
+    "cooling": "bare",
+    "ambient_c": 25,
+    "elapsed_s": 242.4,
+    "first_joint_s": 90.6,
+    "joint_periods": 1519,
+    "final_contract_stale": 2318,
+    "final_contract_applied": 2152259,
+    "topology": {
+      "source": "sim",
+      "root": "/var/tmp/lerwatt-verification-evqbgqyq/cold-joint-8cpu/root",
+      "policies": 3,
+      "clusters": [
+        [
+          0,
+          1,
+          2,
+          3
+        ],
+        [
+          4,
+          5
+        ],
+        [
+          6,
+          7
+        ]
+      ],
+      "capacity_override": [
+        397,
+        397,
+        397,
+        397,
+        1024,
+        1024,
+        1024,
+        1024
+      ]
+    },
+    "exit": {
+      "event": "exit",
+      "unexpected_fallback": false,
+      "watchdog_observed": false,
+      "exit_kind": 64,
+      "exit_code": 0,
+      "reason": "unregistered from user space",
+      "message": "",
+      "default_restored": true,
+      "signal": 0,
+      "status": 0
+    },
+    "simulator_summary": "lerwatt-sim: 242.4 s simulated in 242.4 s: energy 2044.5 J (mean 8.43 W), work served 57.0%, 0 throttle steps, peak 80.4 / 82.2 / 80.4 C (big0 / big1 / little), 0 bad writes",
+    "controller_summary": "lerwatt: stopped after 242.4 s, 5 writes, 0 write errors",
+    "lw_contract": [
+      {
+        "key": 0,
+        "value": {
+          "seq": 3996,
+          "version": 1,
+          "ceiling_cap": 354,
+          "floor_cap": 0,
+          "energy_price_milli": 892,
+          "thermal_headroom_mc": 539,
+          "valid_until_ns": 1755838164936
+        }
+      },
+      {
+        "key": 1,
+        "value": {
+          "seq": 3996,
+          "version": 1,
+          "ceiling_cap": 686,
+          "floor_cap": 0,
+          "energy_price_milli": 892,
+          "thermal_headroom_mc": 539,
+          "valid_until_ns": 1755838164936
+        }
+      },
+      {
+        "key": 2,
+        "value": {
+          "seq": 3996,
+          "version": 1,
+          "ceiling_cap": 512,
+          "floor_cap": 0,
+          "energy_price_milli": 708,
+          "thermal_headroom_mc": 1462,
+          "valid_until_ns": 1755838164936
+        }
+      }
+    ],
+    "lt_demand": [
+      {
+        "key": 0,
+        "value": {
+          "seq": 3954,
+          "version": 1,
+          "pred_util": 395,
+          "cpuperf_max": 325,
+          "cpuperf_mean": 324,
+          "lat_crit_milli": 4,
+          "p99_wake_ns": 2097152,
+          "updated_ns": 1755598264481,
+          "reserved": 0
+        }
+      },
+      {
+        "key": 1,
+        "value": {
+          "seq": 3954,
+          "version": 1,
+          "pred_util": 1021,
+          "cpuperf_max": 686,
+          "cpuperf_mean": 686,
+          "lat_crit_milli": 11,
+          "p99_wake_ns": 2097152,
+          "updated_ns": 1755598264481,
+          "reserved": 0
+        }
+      },
+      {
+        "key": 2,
+        "value": {
+          "seq": 3954,
+          "version": 1,
+          "pred_util": 1021,
+          "cpuperf_max": 512,
+          "cpuperf_mean": 512,
+          "lat_crit_milli": 4,
+          "p99_wake_ns": 1048576,
+          "updated_ns": 1755598264481,
+          "reserved": 0
+        }
+      }
+    ]
+  }
+]
