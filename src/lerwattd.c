@@ -169,6 +169,8 @@ int main(int argc, char **argv)
 
 	lw_ctl_default_params(&params, lowest_passive(&sys));
 	params.policy = policy;
+	if (policy == LW_POLICY_MPC && sys.package_zone < 0)
+		fprintf(stderr, "lerwatt: no package zone: --policy mpc stays on the rule policy\n");
 	if (soft_c > 0)
 		params.soft_limit_mc = (int32_t)(soft_c * 1000.0);
 	fprintf(stderr, "lerwatt: soft limit %.1f degC, period %u ms%s\n",
@@ -234,6 +236,7 @@ int main(int argc, char **argv)
 				.capacity = p->capacity,
 				.deep_idle_latency_us = p->nidle >= 2 ? (int32_t)p->idle[p->nidle - 1].latency_us : -1,
 				.lat_crit = -1,
+				.package_mc = sys.package_zone >= 0 ? s.zone_mc[sys.package_zone] : INT32_MIN,
 			};
 			struct lw_ctl_out o;
 

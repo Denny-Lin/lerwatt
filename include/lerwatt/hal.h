@@ -70,6 +70,7 @@ struct lw_system {
 	struct lw_policy policies[LW_MAX_POLICIES];	/* sorted by first CPU */
 	int nzones;
 	struct lw_zone zones[LW_MAX_ZONES];
+	int package_zone;	/* index into zones of the package sensor, -1 if none */
 	char meter_path[LW_PATH_MAX];	/* hwmon power1_input, "" if none */
 	char meter_name[64];
 };

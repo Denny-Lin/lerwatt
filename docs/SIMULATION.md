@@ -101,18 +101,38 @@ sudo build/lerwattd --telemetry lerwatt.jsonl
 
 "Work served" below 100% under full load is expected: the pattern asks every core for a big core's worth of work, which the A55 cores cannot deliver. On the bare board the kernel's step_wise governor holds the hot spot near the trip by sawtoothing the frequency (5228 steps); Lerwatt keeps it about 3 C under the trip with 29 moves, spending 8% less power for 2.2 points less work. These are simulator results and prove only that the control loop behaves; they are not energy claims.
 
-### First learned policy (`--policy mpc`, experimental)
+### Learned policy (`--policy mpc`, experimental)
 
-The learned policy fits a thermal model online (recursive least squares on 5 s averages: dT/dt = a·P_total + c·T + d), steps down when the model predicts the current ceiling will cross the soft limit within 20 s, and steps up only when the next OPP's predicted steady state is under the limit. The rule controller's reactive guard stays in force. Same 900 s cases:
+The learned policy fits a two-node thermal model online. The package is the slow node, fitted by recursive least squares on 10 s means of the package zone (dT_pkg/dt = a·P_total + c·T_pkg + d). The hot spot is an offset above it, T_hot = T_pkg + r·P_own, where r is the ratio of 60 s averages and a learned gain scales it for bursts too short to reach it. A cluster without a package zone (`lerwattd --describe` shows `package (none)`) stays on the rule policy.
 
-| Scenario | Rule: peak C / moves / served | Learned: peak C / moves / served |
-| --- | --- | --- |
-| Full load, passive | 81.3 / 2 / 68.4% | 81.3 / 19 / 68.0% |
-| Big-core load, passive | 72.1 / 0 / 100% | 72.1 / 0 / 100% |
-| Full load, bare board | 82.2 / 29 / 51.2% | 79.5 / 40 / 50.9% |
-| Burst load, bare board | 83.2 / 8 / 67.4% | 80.4 / 159 / 66.0% |
+Each prediction starts from the measured recent peak and moves it by what the model says changes, so a bias in the model's absolute temperature cancels. The policy steps down when the current ceiling is predicted to cross its line within 5 s. It climbs one OPP only when the next one is predicted to stay under that line for 120 s. A climb that fails doubles the wait before the next one, up to 320 s. The rule policy runs until the model is trained, about 90 s.
 
-The learned policy is safe in every case (no kernel throttling, peaks lower than the rule's), but it is **not better yet**. It serves slightly less work, and under 2 s bursts it alternates one OPP. The estimator is not the cause: `tests/test_learn.c` recovers a first-order plant's parameters through 1 C quantization. The cause is the model structure. The package has two time constants (hot spot about 1 s, die and heatsink hundreds of seconds), and one first-order fit cannot represent both. The next step is a two-node model, with the hot-spot offset fitted from power steps. The rule policy remains the default until a learned policy beats it on served work at equal safety.
+The policy holds the filtered zone temperature to soft limit + 2 C (82 C), and each raw reading to 1 C above that. The rule policy steps down at soft limit + 1 C (81 C), but it overshoots that line when the temperature moves fast. The rule cannot simply use the higher line: 1 C more puts its burst peak at 84.1 C, inside the 1 C margin, and 2 C more makes the kernel throttle.
+
+**Result: the learned policy is more stable than the rule, but it does not beat it on work, so the rule stays the default.** Same 900 s cases:
+
+| Scenario | Rule: peak C / moves / served | Learned: peak C / moves / served | Learned vs rule |
+| --- | --- | --- | --- |
+| Full load, passive | 81.3 / 2 / 68.43% | 82.2 / 2 / 68.75% | +0.32 points of work, one TSADC code hotter |
+| Big-core load, passive | 72.1 / 0 / 99.99% | 72.1 / 0 / 99.99% | Equal |
+| Full load, bare board | 82.2 / 29 / 51.21% | 82.2 / 10 / 51.35% | +0.14 points, 19 fewer moves |
+| Burst load, bare board | 83.2 / 8 / 67.44% | 83.2 / 6 / 67.19% | **-0.25 points**, 2 fewer moves |
+
+The parameters were tuned on those four cases, so `tests/test_closed_loop.c` also runs 19 held-out cases: other sensor-noise seeds, 15 C and 35 C ambient, warm starts, fan cooling, 300 ms and 10 s bursts, load steps and a single busy cluster. Neither policy broke a safety requirement in any of them. The comparison is mixed:
+
+| Across the 19 held-out cases | Learned better | Equal | Learned worse |
+| --- | --- | --- | --- |
+| Work served | 7 | 7 (within 0.01 points) | 5 (-0.20 to -0.76 points; all bursts) |
+| Ceiling moves | 7 | 9 | 3 (+2, +3, +20) |
+| Peak temperature | 0 | 16 | 3 (one TSADC code) |
+
+The largest gain in stability is 126 moves down to 27 with 10 s bursts, at a cost of 0.76 points of work. The worst case for stability is a warm-started bare board under 2 s bursts: 30 moves against 10, with 0.31 points less work.
+
+The two-node model fixed what the first-order model got wrong. It recovers the plant: ambient within about 3 C, and a within about 10% of 1/C_die. r comes out about 20% above the simulated resistance, or more on a throttled bare board, because it also absorbs leakage the Energy Model does not count. The 2 s bursts no longer make the policy alternate one OPP (6 moves against 159 before). What remains is a limit of the control, not of the model:
+
+- Under bursts, raw peaks limit the top OPP. Matching the rule's work takes more moves than the rule makes: with a 60 s hold, the burst case serves 67.28% in 23 moves.
+- The learned policy's extra work under full load partly comes from its higher line. At that same 82 C line the rule serves more than the learned policy in all three cases that throttle (68.78%, 51.66%, 68.10%), but it is hotter on the bare board and breaks the 1 C margin under bursts.
+- Each cluster still decides alone, so the hottest cluster steps down even when another would give up less work per degree. On the bare board the policy ends at the best steady OPP combination an offline search of this model finds. On the passive board it ends at 1.8 / 2.2 / 2.2 GHz, and the search finds 1.6 / 2.4 / 2.4 GHz serves about 1.9 points more at steady state under the same line. Planning across clusters is the next thing to try.
 
 ## 5. Calibration, when the board arrives
 

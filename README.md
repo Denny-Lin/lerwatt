@@ -2,11 +2,11 @@
 
 Lerwatt is an experimental power manager for Linux. It is designed to learn CPU frequency limits, idle-depth constraints and thermal power budgets, and it cooperates with the [Lertick](https://github.com/Denny-Lin/lertick) sched_ext scheduler so that scheduling and power decisions stop working against each other.
 
-[繁體中文](README.zh-TW.md) · [Design](docs/DESIGN.md) · [Simulation](docs/SIMULATION.md) · [Naming](docs/NAMING.md) · [Lertick](https://github.com/Denny-Lin/lertick)
+[Design](docs/DESIGN.md) · [Simulation](docs/SIMULATION.md) · [Naming](docs/NAMING.md) · [Lertick](https://github.com/Denny-Lin/lertick)
 
 ## Current status
 
-**Phase 1: rule-based controller and RK3588 simulator.** `lerwattd` (the controller) and `lerwatt-sim` (a simulated RK3588 board) build, and their unit, closed-loop and end-to-end tests pass. There is no learning yet, and nothing has run on real hardware.
+**Phase 1: rule-based controller and RK3588 simulator.** `lerwattd` (the controller) and `lerwatt-sim` (a simulated RK3588 board) build, and their unit, closed-loop and end-to-end tests pass. The default policy is rule-based, and an experimental learned policy is available. `lerwattd` and `lerwatt-sim` have run with Lertick's `--lerwatt` plug-in in an ARM64 VM with one active cluster. Nothing has run on real hardware.
 
 The first platform is ARM64, modeled on an RK3588 board. The hardware layer reads and writes only standard Linux interfaces (cpufreq, cpuidle, thermal, hwmon), so `lerwattd` is not tied to ARM64; simulating another board means adding a platform description to `sim/`.
 
@@ -21,7 +21,7 @@ A feasibility study against the [Linux v7.3](https://github.com/torvalds/linux/t
 
 A VM has no real cpufreq, cpuidle, thermal sensors, Energy Model or big.LITTLE cores. Until an RK3588 board is connected, `lerwatt-sim` provides those through the same kernel files a board exposes, so `lerwattd` runs unchanged on both and switches to real hardware by itself. Simulation results show that the control loop behaves; energy claims need the board and an external power meter. See [docs/SIMULATION.md](docs/SIMULATION.md) for exactly what is simulated.
 
-An experimental learned policy (`lerwattd --policy mpc`) fits the board's thermal model online and plans ceilings from it. In simulation it is safe but not yet better than the rule controller; see [docs/SIMULATION.md](docs/SIMULATION.md).
+An experimental learned policy (`lerwattd --policy mpc`) fits a two-node thermal model online and plans ceilings from it. In simulation it is safe and usually moves ceilings less often than the rule controller, but it serves less work under bursts, so the rule controller stays the default; see [docs/SIMULATION.md](docs/SIMULATION.md).
 
 **A learned advantage is unproven.** Lerwatt must be measured against EAS + schedutil + the power-allocator thermal governor, and against [scx_lavd](https://github.com/sched-ext/scx/tree/main/scheds/rust/scx_lavd)'s power modes, before any claim is made.
 
@@ -92,6 +92,7 @@ sudo build/lerwattd --describe
 | `include/lerwatt/contract.h` | Lerwatt <-> Lertick shared-map layout, the only shared ABI |
 | `include/lerwatt/hal.h`, `src/hal_*.c` | Real-machine interface: discovery, sampling, writes, restore journal |
 | `include/lerwatt/controller.h`, `src/controller.c` | Pure control law, no I/O |
+| `include/lerwatt/learn.h`, `src/learn.c` | Online two-node thermal model for `--policy mpc` |
 | `src/lerwattd.c` | The daemon |
 | `sim/` | The simulator: RK3588 data, physics, kernel-policy emulation, fake ABI, load sources |
 | `tests/` | Model tests, closed-loop tests, end-to-end script |
@@ -101,9 +102,9 @@ sudo build/lerwattd --describe
 | Phase | Goal | Exit criterion |
 | --- | --- | --- |
 | 0 | Research and design | Feasibility study and this design (done) |
-| 1 | Simulator and rule-based Lerwatt (in progress) | Done: simulator, controller, contract layout, tests. Next: run in the ARM64 VM with real load; Lertick publishes `lt_demand` and reads `lw_contract` |
+| 1 | Simulator and rule-based Lerwatt (in progress) | Done: simulator, controller, contract layout, tests, and a VM run with Lertick publishing `lt_demand` and reading `lw_contract`. Next: run all three simulated clusters with `-smp 8` |
 | 2 | Hardware bring-up and baselines | RK3588 with a mainline kernel and `CONFIG_SCHED_CLASS_EXT=y`, energy measured externally, simulator calibrated, EEVDF + schedutil and scx_lavd baselines reproduced |
-| 3 | Learned Lerwatt | Contextual bandit or MPC with a learned thermal and power model, inside a fixed safety envelope |
+| 3 | Learned Lerwatt (started) | Contextual bandit or MPC with a learned thermal and power model, inside a fixed safety envelope. It becomes the default only after beating the rule policy on both work and stability at equal safety |
 | 4 | Five-way evaluation | Baseline, each controller alone, both without cooperation, both with cooperation |
 | 5 | Release and upstream discussion | Reproducible results; proposals only for interfaces that proved necessary |
 

@@ -53,13 +53,21 @@ static void demand_for(const char *pattern, const struct sim_platform *p, double
 			d[c] = 1.0;
 		else if (!strcmp(pattern, "big"))
 			d[c] = big ? 1.0 : 0.1;
-		else	/* burst */
+		else if (!strcmp(pattern, "burst"))
 			d[c] = ((long)(t / 2.0) % 2) ? 0.05 : 1.0;
+		else if (!strcmp(pattern, "burst10"))
+			d[c] = ((long)(t / 10.0) % 2) ? 0.05 : 1.0;
+		else if (!strcmp(pattern, "burst300ms"))
+			d[c] = ((long)(t / 0.3) % 2) ? 0.05 : 1.0;
+		else if (!strcmp(pattern, "steps"))	/* the load changes every 120 s */
+			d[c] = ((long)(t / 120.0) % 4 + 1) * 0.25;
+		else	/* onebig: one cluster alone */
+			d[c] = c >= 4 && c < 6 ? 1.0 : 0.05;
 	}
 }
 
-static struct result run(const char *pattern, int cooling, bool controlled, enum lw_ctl_policy policy,
-			 double secs)
+static struct result run_from(const char *pattern, int cooling, double ambient_c, double start_c,
+			      uint64_t seed, bool controlled, enum lw_ctl_policy policy, double secs)
 {
 	const struct sim_platform *p = &sim_rk3588;
 	struct lw_opp opps[SIM_MAX_CLUSTERS][SIM_MAX_OPPS];
@@ -70,7 +78,7 @@ static struct result run(const char *pattern, int cooling, bool controlled, enum
 	struct sim_state s;
 	int ticks_per_period = 10;	/* 10 ms model ticks, 100 ms control period */
 
-	sim_init(&s, p, cooling, 25.0, 25.0, 1.0, 42);
+	sim_init(&s, p, cooling, ambient_c, start_c, 1.0, seed);
 	memset(st, 0, sizeof(st));
 	lw_ctl_default_params(&params, p->passive_mc);
 	params.policy = policy;
@@ -112,6 +120,7 @@ static struct result run(const char *pattern, int cooling, bool controlled, enum
 				.capacity = s.capacity[c->first_cpu],
 				.deep_idle_latency_us = (int32_t)p->idle[p->nidle - 1].latency_us,
 				.lat_crit = -1,
+				.package_mc = s.zone[0].sensor_mc,
 			};
 			double others = 0;
 
@@ -145,12 +154,60 @@ static struct result run(const char *pattern, int cooling, bool controlled, enum
 	return r;
 }
 
+static struct result run(const char *pattern, int cooling, bool controlled, enum lw_ctl_policy policy,
+			 double secs)
+{
+	return run_from(pattern, cooling, 25.0, 25.0, 42, controlled, policy, secs);
+}
+
 static void report(const char *name, const char *mode, const struct result *r)
 {
-	printf("| %-22s | %-10s | %6.1f | %7.1f | %6llu | %6llu | %8llu | %7.2f | %6.1f%% |\n",
+	printf("| %-22s | %-10s | %6.1f | %7.1f | %6llu | %6llu | %8llu | %7.2f | %6.2f%% |\n",
 	       name, mode, r->peak_c_after_warmup, r->s_above_trip, r->kernel_throttle_steps,
 	       r->ceiling_changes, r->freq_transitions, r->mean_w, 100 * r->served);
 }
+
+/*
+ * The checks every controller passes. Bursts still swing the hot spot a few
+ * degrees around the controlled mean (its time constant is about a second),
+ * so the margin is checked on peaks.
+ */
+static void check_safe(const char *name, const char *who, const struct result *ctl)
+{
+	/* Requirement 1: the kernel's passive trip never engages, with 1 C of margin. */
+	CHECK(ctl->kernel_throttle_steps == 0, "%s/%s: kernel throttled %llu times with Lerwatt",
+	      name, who, ctl->kernel_throttle_steps);
+	CHECK(ctl->peak_c_after_warmup <= sim_rk3588.passive_mc / 1000.0 - 1.0 + 0.05,
+	      "%s/%s: peak %.1f C is within 1 C of the passive trip", name, who,
+	      ctl->peak_c_after_warmup);
+}
+
+static const struct held_out_case {
+	const char *name, *pattern;
+	int cooling;
+	double ambient_c, start_c;
+	uint64_t seed;
+} held_out[] = {
+	{ "full passive, seed 7", "full", 0, 25, 25, 7 },
+	{ "full bare, seed 7", "full", 2, 25, 25, 7 },
+	{ "burst bare, seed 7", "burst", 2, 25, 25, 7 },
+	{ "burst bare, seed 99", "burst", 2, 25, 25, 99 },
+	{ "full passive, 35 C", "full", 0, 35, 35, 42 },
+	{ "full bare, 35 C", "full", 2, 35, 35, 42 },
+	{ "burst bare, 35 C", "burst", 2, 35, 35, 42 },
+	{ "full bare, 15 C", "full", 2, 15, 15, 42 },
+	{ "full passive, warm 60", "full", 0, 25, 60, 42 },
+	{ "full bare, warm 70", "full", 2, 25, 70, 42 },
+	{ "burst bare, warm 70", "burst", 2, 25, 70, 42 },
+	{ "10 s bursts, bare", "burst10", 2, 25, 25, 42 },
+	{ "300 ms bursts, bare", "burst300ms", 2, 25, 25, 42 },
+	{ "10 s bursts, passive", "burst10", 0, 25, 25, 42 },
+	{ "load steps, bare", "steps", 2, 25, 25, 42 },
+	{ "load steps, passive", "steps", 0, 25, 25, 42 },
+	{ "one cluster, bare", "onebig", 2, 25, 25, 42 },
+	{ "full, fan", "full", 1, 25, 25, 42 },
+	{ "burst, fan, 35 C", "burst", 1, 35, 35, 42 },
+};
 
 int main(void)
 {
@@ -175,32 +232,37 @@ int main(void)
 		report(cases[i].name, "rule", &rule);
 		report(cases[i].name, "learned", &mpc);
 		for (int pass = 0; pass < 2; pass++) {
-		const struct result ctl = pass ? mpc : rule;
-		const char *who = pass ? "learned" : "rule";
+			const struct result ctl = pass ? mpc : rule;
+			const char *who = pass ? "learned" : "rule";
 
-		/*
-		 * Requirement 1: the kernel's passive trip never engages, with at
-		 * least 1 C of margin on the raw sensor. Bursts still swing the
-		 * hot spot a few degrees around the controlled mean (its time
-		 * constant is about a second), so the margin is checked on peaks.
-		 */
-		CHECK(ctl.kernel_throttle_steps == 0, "%s/%s: kernel throttled %llu times with Lerwatt",
-		      cases[i].name, who, ctl.kernel_throttle_steps);
-		CHECK(ctl.peak_c_after_warmup <= sim_rk3588.passive_mc / 1000.0 - 1.0,
-		      "%s/%s: peak %.1f C is within 1 C of the passive trip", cases[i].name, who,
-		      ctl.peak_c_after_warmup);
-		/* Requirement 2: no worse than the kernel alone where it matters. */
-		CHECK(ctl.peak_c_after_warmup <= base.peak_c_after_warmup + 0.5,
-		      "%s/%s: peak %.1f C above baseline %.1f C", cases[i].name, who,
-		      ctl.peak_c_after_warmup, base.peak_c_after_warmup);
-		/*
-		 * Requirement 3: no hunting, under 2 ceiling moves per minute per
-		 * cluster. The learned policy is experimental and not yet held to
-		 * it: under 2 s bursts it still alternates one OPP (see the table).
-		 */
-		CHECK(pass || ctl.ceiling_changes <= 3 * 2 * (unsigned long long)(secs / 60) + 20,
-		      "%s/%s: %llu ceiling changes", cases[i].name, who, ctl.ceiling_changes);
+			check_safe(cases[i].name, who, &ctl);
+			/* Requirement 2: no worse than the kernel alone where it matters. */
+			CHECK(ctl.peak_c_after_warmup <= base.peak_c_after_warmup + 0.5,
+			      "%s/%s: peak %.1f C above baseline %.1f C", cases[i].name, who,
+			      ctl.peak_c_after_warmup, base.peak_c_after_warmup);
+			/* Requirement 3: no hunting, under 2 ceiling moves per minute per cluster. */
+			CHECK(ctl.ceiling_changes <= 3 * 2 * (unsigned long long)(secs / 60) + 20,
+			      "%s/%s: %llu ceiling changes", cases[i].name, who, ctl.ceiling_changes);
 		}
+	}
+
+	/* Cases the learned policy's parameters were not tuned on. */
+	printf("\n| held-out case          | rule: peak / moves / served | learned: peak / moves / served |\n");
+	printf("|------------------------|-----------------------------|--------------------------------|\n");
+	for (size_t i = 0; i < sizeof(held_out) / sizeof(held_out[0]); i++) {
+		const struct held_out_case *h = &held_out[i];
+		struct result rule = run_from(h->pattern, h->cooling, h->ambient_c, h->start_c, h->seed,
+					      true, LW_POLICY_RULE, secs);
+		struct result mpc = run_from(h->pattern, h->cooling, h->ambient_c, h->start_c, h->seed,
+					     true, LW_POLICY_MPC, secs);
+
+		printf("| %-22s | %5.1f / %4llu / %6.2f%%      | %5.1f / %4llu / %6.2f%%         |\n",
+		       h->name, rule.peak_c_after_warmup, rule.ceiling_changes, 100 * rule.served,
+		       mpc.peak_c_after_warmup, mpc.ceiling_changes, 100 * mpc.served);
+		check_safe(h->name, "rule", &rule);
+		check_safe(h->name, "learned", &mpc);
+		CHECK(mpc.ceiling_changes <= 3 * 2 * (unsigned long long)(secs / 60) + 20,
+		      "%s/learned: %llu ceiling changes", h->name, mpc.ceiling_changes);
 	}
 	printf("\npeak C: hottest passive zone after 300 s. kernel: step_wise throttle steps. "
 	       "ceil: Lerwatt ceiling moves. served: share of demanded work done.\n");
