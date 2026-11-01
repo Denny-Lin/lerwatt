@@ -25,6 +25,12 @@ trap cleanup EXIT
 fail() { echo "e2e: FAIL: $*" >&2; exit 1; }
 pass() { echo "e2e: ok - $*"; }
 
+if "$D" --cross-cluster 2>"$WORK/invalid.err"; then
+	fail "joint planning was accepted without --policy mpc"
+fi
+grep -q -- '--cross-cluster requires --policy mpc' "$WORK/invalid.err" || fail "unhelpful joint-policy error"
+pass "joint planning requires the learned policy"
+
 # Never touch a real machine from a test: if this host has cpufreq, pin the sysroot.
 SYSROOT_ARGS=()
 if ls /sys/devices/system/cpu/cpufreq/policy*/scaling_max_freq >/dev/null 2>&1; then
@@ -73,6 +79,13 @@ pass "lerwattd capped big0 down to $MIN_CEIL MHz while the board ran hot"
 [ "$(cat "$MAXF")" = "$ORIG" ] || fail "scaling_max_freq not restored: $(cat "$MAXF") != $ORIG"
 [ ! -f "$JOURNAL" ] || fail "journal left behind after a clean exit"
 pass "clean exit restored every knob and removed the journal"
+
+LERWATT_SIM_ROOT=$ROOT "$D" "${SYSROOT_ARGS[@]}" --policy mpc --cross-cluster --duration 0.3 \
+	--telemetry "$WORK/joint.jsonl" 2>"$WORK/joint.err" || fail "joint-policy startup failed"
+grep -q '"joint":false' "$WORK/joint.jsonl" || fail "untrained joint policy did not report fallback"
+[ "$(cat "$MAXF")" = "$ORIG" ] || fail "joint-policy fallback did not restore knobs"
+[ ! -f "$JOURNAL" ] || fail "joint-policy fallback left a journal"
+pass "joint-policy startup falls back before training and restores knobs"
 
 # 3. Crash recovery: kill -9 leaves the journal; --restore puts values back.
 LERWATT_SIM_ROOT=$ROOT "$D" "${SYSROOT_ARGS[@]}" 2>"$WORK/d2.err" &

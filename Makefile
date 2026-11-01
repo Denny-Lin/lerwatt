@@ -38,10 +38,19 @@ $(BUILD)/test_closed_loop: tests/test_closed_loop.c sim/platform_rk3588.c sim/mo
 $(BUILD)/test_learn: tests/test_learn.c src/learn.c include/lerwatt/learn.h | $(BUILD)
 	$(CC) $(CFLAGS) -o $@ tests/test_learn.c src/learn.c $(LDLIBS)
 
-test: $(BUILD)/test_model $(BUILD)/test_learn $(BUILD)/test_closed_loop
+$(BUILD)/test_forecast: tests/test_forecast.c sim/platform_rk3588.c sim/model.c src/learn.c include/lerwatt/learn.h sim/sim.h | $(BUILD)
+	$(CC) $(CFLAGS) -Isim -o $@ tests/test_forecast.c sim/platform_rk3588.c sim/model.c src/learn.c $(LDLIBS)
+
+$(BUILD)/test_controller: tests/test_controller.c $(CTL_SRCS) $(wildcard include/lerwatt/*.h) | $(BUILD)
+	$(CC) $(CFLAGS) -o $@ tests/test_controller.c $(CTL_SRCS) $(LDLIBS)
+
+test: $(BUILD)/test_model $(BUILD)/test_learn $(BUILD)/test_forecast $(BUILD)/test_controller $(BUILD)/test_closed_loop
 	$(BUILD)/test_model
 	$(BUILD)/test_learn
+	$(BUILD)/test_forecast
+	$(BUILD)/test_controller
 	$(BUILD)/test_closed_loop
+	$(BUILD)/test_closed_loop --cross-cluster
 
 e2e: all
 	tests/e2e.sh $(BUILD)

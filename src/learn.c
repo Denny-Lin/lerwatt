@@ -68,8 +68,36 @@ void lw_tm_observe(struct lw_thermal_model *m, double hot_c, double pkg_c, doubl
 		   double p_other_w, double dt_s)
 {
 	double x[LW_TM_N], y, err, mean_w, mean_c, interval_s;
+	double alpha;
 
-	if (!m->have_prev || dt_s <= 0) {
+	if (dt_s <= 0)
+		return;
+	/* A point forecast must not assume that the current burst persists for
+	 * the entire horizon. Use the same 30 s load memory as the controller;
+	 * no future workload samples or simulator parameters enter the forecast.
+	 */
+	alpha = 1 - exp(-dt_s / TM_PEAK_MEMORY_S);
+	if (!m->have_prev) {
+		m->forecast_own_w = p_own_w;
+		m->forecast_total_w = p_own_w + p_other_w;
+	} else {
+		double change = p_own_w + p_other_w - m->last_total_w;
+
+		m->forecast_own_w += (p_own_w - m->forecast_own_w) * alpha;
+		m->forecast_total_w += (p_own_w + p_other_w - m->forecast_total_w) * alpha;
+		m->load_reversals *= 1 - alpha;
+		if (fabs(change) > .1 * fmax(1, m->forecast_total_w)) {
+			int direction = change > 0 ? 1 : -1;
+
+			if (m->load_direction && direction != m->load_direction)
+				m->load_reversals++;
+			m->load_direction = direction;
+		}
+	}
+	m->last_own_w = p_own_w;
+	m->last_total_w = p_own_w + p_other_w;
+
+	if (!m->have_prev) {
 		/*
 		 * A steady load cannot separate power from board heat, so anchor
 		 * the fit: with no CPU power, about here is where it would stay.
@@ -158,4 +186,21 @@ double lw_tm_peak_offset(const struct lw_thermal_model *m, double p_own_w)
 	double gain = full > 0 ? m->peak_offset_c / full : 1;
 
 	return lw_tm_offset(m, p_own_w) * (gain < 1 ? gain : 1);
+}
+
+double lw_tm_forecast_package(const struct lw_thermal_model *m, double pkg_c, double horizon_s)
+{
+	/* Average recurring bursts, but do not smear an isolated load step over
+	 * thirty seconds. Three recent direction reversals distinguish the two.
+	 */
+	double power = m->load_reversals >= 3 ? m->forecast_total_w : m->last_total_w;
+
+	return lw_tm_ready(m) ? lw_tm_package(m, pkg_c, power, horizon_s) : NAN;
+}
+
+double lw_tm_forecast_hot(const struct lw_thermal_model *m, double pkg_c, double horizon_s)
+{
+	double power = m->load_reversals >= 3 ? m->forecast_own_w : m->last_own_w;
+
+	return lw_tm_forecast_package(m, pkg_c, horizon_s) + lw_tm_offset(m, power);
 }

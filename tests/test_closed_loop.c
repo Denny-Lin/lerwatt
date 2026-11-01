@@ -14,6 +14,7 @@
 #include "sim.h"
 
 static int failures;
+static bool joint_mpc;
 
 #define CHECK(cond, ...) do {						\
 	if (!(cond)) {							\
@@ -25,6 +26,7 @@ static int failures;
 } while (0)
 
 struct result {
+	double peak_c;
 	double peak_c_after_warmup;
 	double s_above_trip;
 	unsigned long long kernel_throttle_steps;
@@ -82,6 +84,7 @@ static struct result run_from(const char *pattern, int cooling, double ambient_c
 	memset(st, 0, sizeof(st));
 	lw_ctl_default_params(&params, p->passive_mc);
 	params.policy = policy;
+	params.cross_cluster = joint_mpc;
 	for (int k = 0; k < p->nclusters; k++)
 		for (int i = 0; i < p->clusters[k].nopps; i++) {
 			opps[k][i].khz = p->clusters[k].opps[i].khz;
@@ -96,6 +99,8 @@ static struct result run_from(const char *pattern, int cooling, double ambient_c
 		for (int z = 0; z < p->nzones; z++) {
 			if (!p->zones[z].passive)
 				continue;
+			if (s.zone[z].sensor_mc / 1000.0 > r.peak_c)
+				r.peak_c = s.zone[z].sensor_mc / 1000.0;
 			if (s.t_s > 300 && s.zone[z].sensor_mc / 1000.0 > r.peak_c_after_warmup)
 				r.peak_c_after_warmup = s.zone[z].sensor_mc / 1000.0;
 			if (s.zone[z].sensor_mc >= p->passive_mc)
@@ -107,10 +112,11 @@ static struct result run_from(const char *pattern, int cooling, double ambient_c
 
 		if (!controlled || (tick + 1) % ticks_per_period)
 			continue;
+		struct lw_ctl_in inputs[SIM_MAX_CLUSTERS];
+		struct lw_ctl_out outputs[SIM_MAX_CLUSTERS];
 		for (int k = 0; k < p->nclusters; k++) {
 			const struct sim_cluster_desc *c = &p->clusters[k];
 			double busy = 0;
-			struct lw_ctl_out o;
 			struct lw_ctl_in in = {
 				.temp_mc = s.zone[zone_of_cluster(p, k)].sensor_mc,
 				.cur_khz = c->opps[s.cl[k].cur_idx].khz,
@@ -136,10 +142,13 @@ static struct result run_from(const char *pattern, int cooling, double ambient_c
 				prev_busy[cpu] = s.cpu[cpu].stat_busy_s;
 			}
 			in.busy_mean = busy / c->ncpus;
-			lw_ctl_step(&params, &in, &st[k], &o,
-				    (uint64_t)(s.t_s * 1e9), 0.1);
-			s.cl[k].user_max_khz = o.ceiling_khz;	/* = writing scaling_max_freq */
-			est_w[k] = o.est_power_w;
+			inputs[k] = in;
+		}
+		lw_ctl_step_group(&params, inputs, st, outputs, p->nclusters,
+				  (uint64_t)(s.t_s * 1e9), 0.1);
+		for (int k = 0; k < p->nclusters; k++) {
+			s.cl[k].user_max_khz = outputs[k].ceiling_khz;	/* = writing scaling_max_freq */
+			est_w[k] = outputs[k].est_power_w;
 			r.mpc_periods += st[k].mpc_periods ? 1 : 0;
 		}
 	}
@@ -180,6 +189,8 @@ static void check_safe(const char *name, const char *who, const struct result *c
 	CHECK(ctl->peak_c_after_warmup <= sim_rk3588.passive_mc / 1000.0 - 1.0 + 0.05,
 	      "%s/%s: peak %.1f C is within 1 C of the passive trip", name, who,
 	      ctl->peak_c_after_warmup);
+	CHECK(ctl->peak_c <= sim_rk3588.passive_mc / 1000.0 - 1.0 + 0.05,
+	      "%s/%s: startup-inclusive peak %.1f C violates the margin", name, who, ctl->peak_c);
 }
 
 static const struct held_out_case {
@@ -209,8 +220,14 @@ static const struct held_out_case {
 	{ "burst, fan, 35 C", "burst", 1, 35, 35, 42 },
 };
 
-int main(void)
+int main(int argc, char **argv)
 {
+	if (argc == 2 && !strcmp(argv[1], "--cross-cluster"))
+		joint_mpc = true;
+	else if (argc != 1) {
+		fprintf(stderr, "usage: test_closed_loop [--cross-cluster]\n");
+		return 1;
+	}
 	const double secs = 900;
 	struct {
 		const char *name, *pattern;
@@ -266,6 +283,30 @@ int main(void)
 	}
 	printf("\npeak C: hottest passive zone after 300 s. kernel: step_wise throttle steps. "
 	       "ceil: Lerwatt ceiling moves. served: share of demanded work done.\n");
+	/* Start hot enough to expose the first seconds, before any model is ready.
+	 * The one-degree margin applies from startup, not just after 300 seconds.
+	 */
+	for (int cooling = 0; cooling < 3; cooling++) {
+		for (int policy = LW_POLICY_RULE; policy <= LW_POLICY_MPC; policy++) {
+			const uint64_t seeds[] = { 42, 7, 99 };
+
+			for (int seed = 0; seed < 3; seed++) {
+				for (int burst = 0; burst < 2; burst++) {
+					const char *pattern = burst ? "burst" : "full";
+					struct result hot = run_from(pattern, cooling, 25, 79, seeds[seed],
+								     true, policy, 60);
+
+					printf("hot start cooling=%d policy=%d seed=%llu %s: peak %.1f C, %llu throttle steps\n",
+					       cooling, policy, (unsigned long long)seeds[seed], pattern,
+					       hot.peak_c, hot.kernel_throttle_steps);
+					CHECK(hot.peak_c <= 84.05 && !hot.kernel_throttle_steps,
+					      "hot startup cooling=%d policy=%d seed=%llu %s: peak %.1f C, throttles %llu",
+					      cooling, policy, (unsigned long long)seeds[seed], pattern,
+					      hot.peak_c, hot.kernel_throttle_steps);
+				}
+			}
+		}
+	}
 	if (failures) {
 		fprintf(stderr, "test_closed_loop: %d failure(s)\n", failures);
 		return 1;

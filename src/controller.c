@@ -8,6 +8,7 @@
 void lw_ctl_default_params(struct lw_ctl_params *p, int32_t lowest_passive_mc)
 {
 	p->soft_limit_mc = (lowest_passive_mc != INT32_MAX ? lowest_passive_mc : 85000) - 5000;
+	p->raw_limit_mc = (lowest_passive_mc != INT32_MAX ? lowest_passive_mc : 85000) - 3000;
 	p->kp_w_per_c = 0.25;
 	p->ki_w_per_cs = 0.05;
 	p->deadband_c = 1.0;
@@ -20,8 +21,9 @@ void lw_ctl_default_params(struct lw_ctl_params *p, int32_t lowest_passive_mc)
 	p->price_ramp_c = 5.0;
 	p->lat_crit_threshold = 0.5;
 	p->policy = LW_POLICY_RULE;
+	p->cross_cluster = false;
 	p->mpc_horizon_s = 5.0;
-	p->mpc_over_soft_c = 2.0;
+	p->mpc_over_soft_c = p->deadband_c;	/* same filtered line as the rule */
 	p->mpc_margin_c = 0.5;
 	p->mpc_peak_memory_s = 30.0;
 	p->mpc_hold_s = 120.0;
@@ -119,9 +121,9 @@ static int lowest_idx_at_least(const struct lw_ctl_in *in, double khz)
 	return in->nopps - 1;
 }
 
-void lw_ctl_step(const struct lw_ctl_params *p, const struct lw_ctl_in *in,
+static void ctl_step(const struct lw_ctl_params *p, const struct lw_ctl_in *in,
 		 struct lw_ctl_state *st, struct lw_ctl_out *out,
-		 uint64_t now_ns, double dt_s)
+		 uint64_t now_ns, double dt_s, bool joint)
 {
 	int top = in->nopps - 1;
 	int min_idx = lowest_idx_at_least(in, p->min_ceiling_frac * in->opps[top].khz);
@@ -144,7 +146,9 @@ void lw_ctl_step(const struct lw_ctl_params *p, const struct lw_ctl_in *in,
 	out->headroom_mc = 0;
 	out->est_power_w = lw_ctl_est_power_w(in, lowest_idx_at_least(in, in->cur_khz));
 	out->model_ready = false;
+	out->joint_active = false;
 	out->predicted_c = NAN;
+	out->forecast_c = NAN;
 
 	if (in->temp_mc == INT32_MIN) {
 		/* No sensor: never cap blindly. */
@@ -190,6 +194,21 @@ void lw_ctl_step(const struct lw_ctl_params *p, const struct lw_ctl_in *in,
 		}
 	}
 
+	/* A hot start or a fast ramp cannot wait for the EMA and one-second
+	 * OPP descent. The same raw guard applies before either policy, including
+	 * the model's training period. Retain the kernel's independent trips.
+	 */
+	if (in->temp_mc >= p->raw_limit_mc) {
+		if (st->ceil_idx != min_idx) {
+			st->ceil_idx = min_idx;
+			st->ceiling_changes++;
+		}
+		st->integ_w = pmin;
+		st->last_down_ns = now_ns;
+		out->budget_w = pmin;
+		goto priced;
+	}
+
 	if (p->policy == LW_POLICY_MPC && in->package_mc != INT32_MIN) {
 		double limit = p->soft_limit_mc / 1000.0 + p->mpc_over_soft_c;
 		bool down_ok = now_ns - st->last_down_ns >= (uint64_t)p->down_step_ms * 1000000ull;
@@ -222,6 +241,7 @@ void lw_ctl_step(const struct lw_ctl_params *p, const struct lw_ctl_in *in,
 		st->mpc_peak_busy = fmax(in->busy_mean, st->mpc_peak_busy *
 					 exp(-dt_s / p->mpc_peak_memory_s));
 		out->model_ready = lw_tm_ready(&st->tm);
+		out->forecast_c = lw_tm_forecast_hot(&st->tm, in->package_mc / 1000.0, 5);
 		if (out->model_ready) {
 			double pred = plan_temp_c(in, st, st->ceil_idx, p->mpc_horizon_s);
 			bool over = temp_c > limit;
@@ -230,6 +250,10 @@ void lw_ctl_step(const struct lw_ctl_params *p, const struct lw_ctl_in *in,
 				       (uint64_t)(3 * p->temp_filter_s * 1e9);
 
 			out->predicted_c = pred;
+			if (joint) {
+				st->mpc_periods++;
+				goto priced;
+			}
 			/*
 			 * Down as soon as the current ceiling is predicted to cross the
 			 * limit within the horizon, to the highest ceiling that is not,
@@ -306,5 +330,121 @@ done:
 		out->floor_cap = perf_of(in, f);
 		if (in->deep_idle_latency_us > 0)
 			out->resume_latency_us = in->deep_idle_latency_us - 1;
+	}
+}
+
+void lw_ctl_step(const struct lw_ctl_params *p, const struct lw_ctl_in *in,
+		 struct lw_ctl_state *st, struct lw_ctl_out *out,
+		 uint64_t now_ns, double dt_s)
+{
+	ctl_step(p, in, st, out, now_ns, dt_s, false);
+}
+
+/* No platform constants: enumerate only small products of discovered OPPs.
+ * Larger topologies, missing sensors/EMs and untrained models keep the
+ * independent controller. All inputs and model state are real HAL observations.
+ */
+void lw_ctl_step_group(const struct lw_ctl_params *p, const struct lw_ctl_in *in,
+		       struct lw_ctl_state *st, struct lw_ctl_out *out, int n,
+		       uint64_t now_ns, double dt_s)
+{
+	int lo[LW_MAX_POLICIES], idx[LW_MAX_POLICIES], best[LW_MAX_POLICIES];
+	unsigned int combinations = 1;
+	bool joint = p->cross_cluster && p->policy == LW_POLICY_MPC && n > 1 && n <= LW_MAX_POLICIES;
+	double best_work = -1, best_power = INFINITY, best_excess = INFINITY;
+	double limit = p->soft_limit_mc / 1000.0 + p->mpc_over_soft_c - p->mpc_margin_c;
+
+	if (n < 1 || n > LW_MAX_POLICIES)
+		return;
+	for (int k = 0; k < n; k++) {
+		int count;
+
+		lo[k] = lowest_idx_at_least(&in[k], p->min_ceiling_frac * in[k].opps[in[k].nopps - 1].khz);
+		count = in[k].nopps - lo[k];
+		if (count < 1 || combinations > 65536u / (unsigned int)count)
+			joint = false;
+		else
+			combinations *= (unsigned int)count;
+		if (!lw_tm_ready(&st[k].tm) || in[k].temp_mc == INT32_MIN || in[k].package_mc == INT32_MIN)
+			joint = false;
+		for (int i = 0; i < in[k].nopps; i++)
+			if (!in[k].opps[i].power_uw)
+				joint = false;
+	}
+	for (int k = 0; k < n; k++) {
+		ctl_step(p, &in[k], &st[k], &out[k], now_ns, dt_s, joint);
+		out[k].joint_active = joint;
+	}
+	/* Keep an allocation for the same horizon that justified it. Re-solving
+	 * every 10 s lets sensor codes move work back and forth between clusters.
+	 * The common raw guard remains immediate during this hold.
+	 */
+	if (!joint || (st[0].last_group_ns &&
+	    now_ns - st[0].last_group_ns < (uint64_t)(p->mpc_hold_s * 1e9)))
+		return;
+	st[0].last_group_ns = now_ns;
+	for (int k = 0; k < n; k++)
+		idx[k] = lo[k];
+	for (unsigned int c = 0; c < combinations; c++) {
+		double total = 0, work = 0, excess = 0;
+		bool allowed = true;
+
+		for (int k = 0; k < n; k++) {
+			/* The shared raw guard cannot be undone by a joint plan. */
+			if (in[k].temp_mc >= p->raw_limit_mc && idx[k] > lo[k])
+				allowed = false;
+			total += plan_mean_w(&in[k], &st[k], idx[k]);
+			work += in[k].ncpus * (plan_saturated(&st[k]) ?
+				st[k].mpc_busy * perf_of(&in[k], idx[k]) :
+				fmin(st[k].mpc_work_khz / in[k].opps[in[k].nopps - 1].khz * in[k].capacity,
+				     perf_of(&in[k], idx[k])));
+		}
+		for (int k = 0; k < n; k++) {
+			double delta = lw_tm_peak_offset(&st[k].tm, plan_peak_w(&in[k], &st[k], idx[k])) -
+				lw_tm_peak_offset(&st[k].tm, plan_peak_w(&in[k], &st[k], st[k].ceil_idx));
+			double near = st[k].mpc_peak_c + delta +
+				lw_tm_package(&st[k].tm, st[k].pkg_c, total, p->mpc_horizon_s) - st[k].pkg_c;
+			double hold = st[k].mpc_peak_c + delta +
+				lw_tm_package(&st[k].tm, st[k].pkg_c, total, p->mpc_hold_s) - st[k].pkg_c;
+
+			excess = fmax(excess, fmax(near, hold) - limit);
+		}
+		/* Feasibility first. If no combination fits yet, reduce the largest
+		 * predicted violation rather than taking an unsafe throughput winner.
+		 */
+		if (allowed && (excess < best_excess - 1e-6 ||
+		    (fabs(excess - best_excess) <= 1e-6 &&
+		     (work > best_work + 1e-6 || (fabs(work - best_work) <= 1e-6 && total < best_power))))) {
+			best_excess = excess;
+			best_work = work;
+			best_power = total;
+			for (int k = 0; k < n; k++)
+				best[k] = idx[k];
+		}
+		for (int k = n - 1; k >= 0; k--) {
+			if (++idx[k] < in[k].nopps)
+				break;
+			idx[k] = lo[k];
+		}
+	}
+	if (best_work < 0)
+		return;
+	for (int k = 0; k < n; k++) {
+		if (best[k] != st[k].ceil_idx) {
+			if (best[k] < st[k].ceil_idx)
+				st[k].last_down_ns = now_ns;
+			else
+				st[k].last_up_ns = now_ns;
+			plan_move(&in[k], &st[k], best[k]);
+		}
+		out[k].ceiling_khz = in[k].opps[best[k]].khz;
+		out[k].ceiling_cap = perf_of(&in[k], best[k]);
+		out[k].budget_w = plan_mean_w(&in[k], &st[k], best[k]);
+		out[k].predicted_c = st[k].mpc_peak_c +
+			lw_tm_package(&st[k].tm, st[k].pkg_c, best_power, p->mpc_horizon_s) - st[k].pkg_c;
+		if (out[k].floor_khz > out[k].ceiling_khz) {
+			out[k].floor_khz = out[k].ceiling_khz;
+			out[k].floor_cap = out[k].ceiling_cap;
+		}
 	}
 }

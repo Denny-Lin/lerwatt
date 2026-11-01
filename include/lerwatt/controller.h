@@ -1,6 +1,6 @@
 /* SPDX-License-Identifier: MIT */
 /*
- * Lerwatt control law (Phase 2, no learning).
+ * Lerwatt control law: rule baseline, online thermal MPC and joint planning.
  *
  * Pure computation: no I/O, no clocks, no globals. lerwattd feeds it from the
  * HAL; the closed-loop test feeds it straight from the simulator model. Both
@@ -37,6 +37,7 @@ enum lw_ctl_policy {
 
 struct lw_ctl_params {
 	int32_t soft_limit_mc;		/* default: lowest passive trip - 5 degC */
+	int32_t raw_limit_mc;		/* fast guard: passive trip - 3 C; independent of policy */
 	double kp_w_per_c;		/* proportional gain, W per degC */
 	double ki_w_per_cs;		/* integral gain, W per degC per second */
 	double deadband_c;
@@ -49,6 +50,7 @@ struct lw_ctl_params {
 	double price_ramp_c;
 	double lat_crit_threshold;	/* 0..1 */
 	enum lw_ctl_policy policy;
+	bool cross_cluster;		/* opt-in bounded joint search; MPC only */
 	double mpc_horizon_s;		/* look-ahead of the predictive ceiling */
 	double mpc_over_soft_c;		/* line the plan holds, above the soft limit */
 	double mpc_margin_c;		/* a climb must predict this far under the limit */
@@ -96,6 +98,7 @@ struct lw_ctl_state {
 	double mpc_up_wait_s;		/* wait before a climb, doubled by each failed one */
 	double pkg_c;			/* filtered package temperature */
 	double mpc_peak_c;		/* recent peak of the filtered zone temperature */
+	uint64_t last_group_ns;
 };
 
 struct lw_ctl_out {
@@ -109,7 +112,9 @@ struct lw_ctl_out {
 	uint32_t ceiling_cap;
 	uint32_t floor_cap;
 	bool model_ready;
+	bool joint_active;
 	double predicted_c;		/* model's temperature at the horizon, NAN if none */
+	double forecast_c;		/* expected 5 s point forecast; not a safety bound */
 };
 
 void lw_ctl_default_params(struct lw_ctl_params *p, int32_t lowest_passive_mc);
@@ -118,5 +123,9 @@ void lw_ctl_step(const struct lw_ctl_params *p, const struct lw_ctl_in *in,
 		 uint64_t now_ns, double dt_s);
 /* Estimated CPU power of the cluster at OPP index i, given the current load. */
 double lw_ctl_est_power_w(const struct lw_ctl_in *in, int i);
+/* Observe a simultaneous sample, then optionally plan across all clusters. */
+void lw_ctl_step_group(const struct lw_ctl_params *p, const struct lw_ctl_in *in,
+		       struct lw_ctl_state *st, struct lw_ctl_out *out, int n,
+		       uint64_t now_ns, double dt_s);
 
 #endif /* LERWATT_CONTROLLER_H */

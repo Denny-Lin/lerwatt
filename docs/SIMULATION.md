@@ -1,6 +1,6 @@
 # Simulation and the real-machine interface
 
-Status: **Phase 1 testbed, 2026-11-01.** Until an RK3588 board is connected, `lerwatt-sim` stands in for one. When a board is connected, `lerwattd` uses it with no flag and no code change.
+Validation recorded **2026-11-01**. Until an RK3588 board is connected, `lerwatt-sim` stands in for one. When a board is connected, `lerwattd` uses it with no flag and no code change.
 
 ## 1. Where the cut is
 
@@ -92,55 +92,175 @@ sudo build/lerwattd --telemetry lerwatt.jsonl
 - With Lertick attached, schedutil follows Lertick's `cpuperf_max` per cluster (what happens when sched_ext runs every task); otherwise it follows PELT utilization.
 - The VM should have 8 vCPUs (`-smp 8`) so that every simulated core gets real demand. With fewer, use `--cpu-map`.
 
-## 4. Closed-loop results (simulation)
+## 4. Control and forecast results
 
-`tests/test_closed_loop.c` runs the real control law against the model for 900 simulated seconds per case, observing only what `lerwattd` can observe on a board.
+These are simulator measurements, not hardware energy or latency claims. Reproduce with:
 
-| Scenario | Controller | Peak C after 300 s | Seconds above 85 C (all zones) | Kernel throttle steps | Ceiling moves | Mean board W | Work served |
-| --- | --- | --- | --- | --- | --- | --- | --- |
-| Full load, passive | off | 84.1 | 0 | 0 | 0 | 10.61 | 69.4% |
-| Full load, passive | Lerwatt | 81.3 | 0 | 0 | 2 | 10.48 | 68.4% |
-| Big-core load, passive | off | 72.1 | 0 | 0 | 0 | 8.76 | 100% |
-| Big-core load, passive | Lerwatt | 72.1 | 0 | 0 | 0 | 8.76 | 100% |
-| Full load, bare board | off | 94.8 | 2293 | 5228 | 0 | 8.17 | 53.4% |
-| Full load, bare board | Lerwatt | 82.2 | 0 | 0 | 29 | 7.50 | 51.2% |
-| Burst load, bare board | off | 85.9 | 11.5 | 93 | 0 | 6.88 | 68.9% |
-| Burst load, bare board | Lerwatt | 83.2 | 0 | 0 | 8 | 6.77 | 67.4% |
+```sh
+make test
+build/test_closed_loop
+build/test_closed_loop --cross-cluster
+build/test_forecast
+```
 
-"Work served" below 100% under full load is expected: the pattern asks every core for a big core's worth of work, which the A55 cores cannot deliver. On the bare board the kernel's step_wise governor holds the hot spot near the trip by sawtoothing the frequency (5228 steps); Lerwatt keeps it about 3 C under the trip with 29 moves, spending 8% less power for 2.2 points less work. These are simulator results and prove only that the control loop behaves; they are not energy claims.
+Full textual outputs are preserved in [results/thermal-control](../results/thermal-control/README.md).
 
-### Learned policy (`--policy mpc`, experimental)
+### Equal temperature settings
 
-The learned policy fits a two-node thermal model online. The package is the slow node, fitted by recursive least squares on 10 s means of the package zone (dT_pkg/dt = a·P_total + c·T_pkg + d). The hot spot is an offset above it, T_hot = T_pkg + r·P_own, where r is the ratio of 60 s averages and a learned gain scales it for bursts too short to reach it. A cluster without a package zone (`lerwattd --describe` shows `package (none)`) stays on the rule policy.
+All controllers now use the same 80 C soft limit, 81 C filtered decision line
+and raw-temperature guard at 82 C (the passive trip minus 3 C). MPC no longer
+uses the earlier, higher 82 C filtered line. The guard immediately caps to
+the configured minimum ceiling, rather than waiting for the temperature EMA
+or the normal one-OPP-per-second descent. Both policies retain the kernel's
+85 C passive trip and 115 C critical trip. TSADC quantization, noise and its
+250 ms sampling delay mean the guard must act before the desired 84 C peak.
+It cannot guarantee that arbitrary hardware or a controller started after
+overheating will meet that peak.
 
-Each prediction starts from the measured recent peak and moves it by what the model says changes, so a bias in the model's absolute temperature cancels. The policy steps down when the current ceiling is predicted to cross its line within 5 s. It climbs one OPP only when the next one is predicted to stay under that line for 120 s. A climb that fails doubles the wait before the next one, up to 320 s. The rule policy runs until the model is trained, about 90 s.
+### Hot startup
 
-The policy holds the filtered zone temperature to soft limit + 2 C (82 C), and each raw reading to 1 C above that. The rule policy steps down at soft limit + 1 C (81 C), but it overshoots that line when the temperature moves fast. The rule cannot simply use the higher line: 1 C more puts its burst peak at 84.1 C, inside the 1 C margin, and 2 C more makes the kernel throttle.
+The original 79 C hot-start reproduction reached 85.9 C and triggered thermal
+throttling even without Lertick or contract startup delays: the controller
+began at the highest ceiling and reacted too slowly to the rising hot spot.
+A first guard at 83 C eliminated throttling but still peaked at 84.1 C, failing
+the one-degree margin; it was not accepted.
 
-**Result: the learned policy is more stable than the rule, but it does not beat it on work, so the rule stays the default.** Same 900 s cases:
+The final tests include full and two-second burst loads from 79 C, three
+cooling profiles and seeds 42/7/99, for both policies in each comparison.
+All 72 startup runs across the independent and joint comparisons passed:
+maximum sensor temperature 83.2 C, no kernel throttle steps. The original four
+900 s cases and 19 regression cases now check the one-degree peak margin from
+time zero as well as reporting peaks after 300 s.
 
-| Scenario | Rule: peak C / moves / served | Learned: peak C / moves / served | Learned vs rule |
+The protection has a cost. Relative to the earlier rule-controller report,
+full bare-board work served fell from 51.21% to 51.04%, and two-second burst
+work fell from 67.44% to 66.43%; burst ceiling moves rose from 8 to 42. These
+changes are reported rather than hidden by raising the temperature line.
+
+### Independent and cross-cluster control
+
+The learned policy fits a package node with recursive least squares and a
+per-cluster hot-spot offset. Independent MPC predicts a five-second heating
+horizon and requires an increase to fit over a 120 s hold. It uses rule control
+until trained, usually around 90 s, or when no package sensor is available.
+
+`--policy mpc --cross-cluster` enables bounded enumeration of discovered OPP
+combinations. It maximizes estimated work among combinations predicted to fit
+both horizons for every cluster, using total package power and each cluster's
+own hot-spot power. If none fits, it minimizes the largest predicted violation.
+A plan is held for 120 s; the shared raw guard can still override it immediately.
+A first version re-planned every 10 s and failed stability checks, so that
+version was rejected. Missing sensors, Energy Models, untrained models, a
+single cluster or more than 65,536 combinations retain independent control.
+Inputs are sampled together before any cluster's estimate is updated.
+
+No simulator thermal constants or offline optimal OPP combinations enter the
+planner. The offline estimate of roughly 1.9 additional points under passive
+cooling is not an achieved online result.
+
+Each case lasts 900 simulated seconds. Cells show **peak C after 300 s /
+ceiling moves / work served**; startup-inclusive safety is checked separately.
+
+| Case | Rule | Independent MPC | Joint MPC |
 | --- | --- | --- | --- |
-| Full load, passive | 81.3 / 2 / 68.43% | 82.2 / 2 / 68.75% | +0.32 points of work, one TSADC code hotter |
-| Big-core load, passive | 72.1 / 0 / 99.99% | 72.1 / 0 / 99.99% | Equal |
-| Full load, bare board | 82.2 / 29 / 51.21% | 82.2 / 10 / 51.35% | +0.14 points, 19 fewer moves |
-| Burst load, bare board | 83.2 / 8 / 67.44% | 83.2 / 6 / 67.19% | **-0.25 points**, 2 fewer moves |
+| full load, passive | 81.3 / 2 / 68.43% | 81.3 / 2 / 68.38% | 81.3 / 5 / 68.44% |
+| big-core load, passive | 72.1 / 0 / 99.99% | 72.1 / 0 / 99.99% | 72.1 / 1 / 99.99% |
+| full load, bare board | 81.3 / 11 / 51.04% | 81.3 / 14 / 51.08% | 81.3 / 8 / 50.89% |
+| burst load, bare board | 82.2 / 42 / 66.43% | 82.2 / 34 / 66.52% | 79.5 / 8 / 65.56% |
 
-The parameters were tuned on those four cases, so `tests/test_closed_loop.c` also runs 19 held-out cases: other sensor-noise seeds, 15 C and 35 C ambient, warm starts, fan cooling, 300 ms and 10 s bursts, load steps and a single busy cluster. Neither policy broke a safety requirement in any of them. The comparison is mixed:
+Original 19 held-out cases, retained as regression cases after inspection:
 
-| Across the 19 held-out cases | Learned better | Equal | Learned worse |
+| Case | Rule | Independent MPC | Joint MPC |
 | --- | --- | --- | --- |
-| Work served | 7 | 7 (within 0.01 points) | 5 (-0.20 to -0.76 points; all bursts) |
-| Ceiling moves | 7 | 9 | 3 (+2, +3, +20) |
-| Peak temperature | 0 | 16 | 3 (one TSADC code) |
+| held-out case | rule: peak / moves / served | learned: peak / moves / served | learned: peak / moves / served |
+| full passive, seed 7 | 81.3 / 2 / 68.44% | 81.3 / 4 / 68.35% | 81.3 / 2 / 68.19% |
+| full bare, seed 7 | 81.3 / 10 / 51.04% | 81.3 / 16 / 51.09% | 81.3 / 10 / 50.89% |
+| burst bare, seed 7 | 82.2 / 39 / 66.51% | 82.2 / 27 / 66.68% | 79.5 / 9 / 65.96% |
+| burst bare, seed 99 | 82.2 / 38 / 66.62% | 82.2 / 34 / 66.49% | 79.5 / 8 / 65.75% |
+| full passive, 35 C | 82.2 / 41 / 62.60% | 81.3 / 11 / 62.95% | 81.3 / 7 / 62.97% |
+| full bare, 35 C | 82.2 / 21 / 44.77% | 81.3 / 12 / 44.38% | 81.3 / 20 / 44.37% |
+| burst bare, 35 C | 82.2 / 151 / 59.24% | 82.2 / 13 / 60.25% | 79.5 / 12 / 58.95% |
+| full bare, 15 C | 81.3 / 32 / 55.73% | 79.5 / 10 / 55.22% | 80.4 / 6 / 55.13% |
+| full passive, warm 60 | 81.3 / 2 / 67.18% | 81.3 / 6 / 67.04% | 81.3 / 6 / 66.85% |
+| full bare, warm 70 | 82.2 / 51 / 48.98% | 81.3 / 13 / 49.23% | 82.2 / 21 / 47.98% |
+| burst bare, warm 70 | 82.2 / 61 / 65.23% | 82.2 / 58 / 65.27% | 81.3 / 15 / 64.76% |
+| 10 s bursts, bare | 82.2 / 110 / 66.05% | 81.3 / 27 / 65.87% | 77.6 / 8 / 64.50% |
+| 300 ms bursts, bare | 69.3 / 0 / 58.03% | 69.3 / 0 / 58.03% | 69.3 / 0 / 58.03% |
+| 10 s bursts, passive | 60.1 / 0 / 70.46% | 60.1 / 0 / 70.46% | 60.1 / 0 / 70.46% |
+| load steps, bare | 82.2 / 31 / 69.42% | 81.3 / 30 / 69.83% | 81.3 / 15 / 68.30% |
+| load steps, passive | 69.3 / 0 / 79.25% | 69.3 / 0 / 79.25% | 61.0 / 18 / 73.56% |
+| one cluster, bare | 76.7 / 0 / 99.99% | 76.7 / 0 / 99.99% | 76.7 / 2 / 99.99% |
+| full, fan | 52.7 / 0 / 69.38% | 52.7 / 0 / 69.38% | 52.7 / 0 / 69.38% |
+| burst, fan, 35 C | 52.7 / 0 / 68.92% | 52.7 / 0 / 68.92% | 52.7 / 0 / 68.92% |
 
-The largest gain in stability is 126 moves down to 27 with 10 s bursts, at a cost of 0.76 points of work. The worst case for stability is a warm-started bare board under 2 s bursts: 30 moves against 10, with 0.31 points less work.
+**The rule remains the default; joint planning is opt-in.** Neither learned
+configuration consistently improves both work and stability. In particular,
+joint MPC sacrifices work on several long-burst and load-step cases despite
+reducing switching. The parameters were not swept to optimize the original
+19 cases. Those cases are now regression evidence rather than an untouched
+source of generalization claims.
 
-The two-node model fixed what the first-order model got wrong. It recovers the plant: ambient within about 3 C, and a within about 10% of 1/C_die. r comes out about 20% above the simulated resistance, or more on a throttled bare board, because it also absorbs leakage the Energy Model does not count. The 2 s bursts no longer make the policy alternate one OPP (6 moves against 159 before). What remains is a limit of the control, not of the model:
+### Eight-vCPU Linux integration
 
-- Under bursts, raw peaks limit the top OPP. Matching the rule's work takes more moves than the rule makes: with a 60 s hold, the burst case serves 67.28% in 23 moves.
-- The learned policy's extra work under full load partly comes from its higher line. At that same 82 C line the rule serves more than the learned policy in all three cases that throttle (68.78%, 51.66%, 68.10%), but it is hotter on the bare board and breaks the 1 C margin under bursts.
-- Each cluster still decides alone, so the hottest cluster steps down even when another would give up less work per degree. On the bare board the policy ends at the best steady OPP combination an offline search of this model finds. On the passive board it ends at 1.8 / 2.2 / 2.2 GHz, and the search finds 1.6 / 2.4 / 2.4 GHz serves about 1.9 points more at steady state under the same line. Planning across clusters is the next thing to try.
+The same `procstat` and BPF-map setup was re-run with eight pinned busy workers:
+
+| Run | Initial temperature | Duration | Joint activation | Sensor peaks big0 / big1 / little | Kernel throttle steps |
+| --- | --- | --- | --- | --- | ---: |
+| Rule | 79 C | 25 s scheduler run | disabled | 83.2 / 83.2 / 82.2 C | 0 |
+| MPC + joint, hot | 79 C | 140 s scheduler run | models not ready; rule fallback | 82.2 / 83.2 / 82.2 C | 0 |
+| MPC + joint, cold | 25 C | 240 s scheduler run | all clusters active from daemon t=90.6 s | 80.4 / 82.2 / 80.4 C | 0 |
+
+The hot-joint harness initially required activation within 140 s and failed
+that assertion. It confirmed conservative fallback, not joint execution.
+The separate cold run exercised trained joint decisions for 1,519 control
+periods. Models were not force-enabled or given simulator coefficients.
+All runs retained valid contract/demand map records, reported zero bad knob
+writes and restored the default scheduler. Simulation summaries include a
+small amount of startup/shutdown time beyond each finite scheduler run.
+These runs have different lengths and initial conditions, so their work-served
+figures are not a policy comparison. Exact summaries are preserved in
+[vm.json](../results/thermal-control/vm.json).
+
+### Prediction accuracy, measured independently of work served
+
+`test_forecast` saves five-second point forecasts before their future labels
+exist, and scores them when those labels arrive. The workload runs for 1200 s.
+These traces exercise the model module under simulated kernel policies,
+without Lerwatt control or Lertick. They do not measure the daemon's closed-loop
+forecast error or real-hardware accuracy.
+Forecasts start after 300 s, producing 26,853 cluster-label pairs per trace.
+The model continues learning causally; no future samples are used to build a
+forecast. These overlapping, correlated forecasts are descriptive metrics,
+not independent trials or confidence intervals.
+
+A constant-current-power forecast overestimates how long a short burst lasts.
+The point forecaster uses a causal 30 s power mean after at least three recent
+power-direction reversals, while retaining current power for isolated changes.
+This changes the forecast input, not the RLS coefficients or the planner's
+safety prediction. Telemetry separates `forecast_c` (expected temperature in
+five seconds) from `pred_c` (planning prediction), with `-1` for unavailable.
+
+The baseline predicts that the current sensor temperature persists. The
+constant-power comparator uses the same learned model at current power. All
+metrics below are hot-spot MAE in C; lower is better.
+
+| Trace | Persistence | Constant power | Causal forecast |
+| --- | ---: | ---: | ---: |
+| steps-passive-seed7 | 0.4779 | 0.5406 | 0.5406 |
+| burst2-bare-seed99 | 1.8220 | 3.3919 | 1.4259 |
+| burst03-fan-35C | 0.5151 | 2.2938 | 0.5163 |
+| steps-bare-15C-seed13579 | 0.6895 | 0.6020 | 0.7202 |
+| burst2-passive-35C-seed2026 | 1.8265 | 2.1709 | 1.3909 |
+| burst03-bare-seed2718 | 0.4366 | 3.4102 | 0.4766 |
+
+The last three traces use additional seeds/environments reserved after the
+forecasting rule was fixed; no thresholds were changed in response to those
+results. The model beats persistence on the two 2 s burst traces, while the
+other four are worse, including a nearly tied 300 ms fan trace. The 15 C step
+trace also regresses against constant-power forecasting. Package MAE and
+hot-spot RMSE are included in the raw JSONL. **A general prediction-accuracy
+advantage is unproven.** Future model changes can be compared against these
+recorded baselines without confusing lower forecast error with higher throughput.
 
 ## 5. Calibration, when the board arrives
 
