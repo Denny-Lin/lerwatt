@@ -20,6 +20,8 @@ struct lw_contract {
 	size_t lt_len;
 	struct lt_demand_rec lt_last[LW_CONTRACT_MAX_CLUSTERS];
 	bool lt_valid[LW_CONTRACT_MAX_CLUSTERS];
+	uint64_t opened_ns;		/* set by lw_contract_maintain() */
+	uint64_t last_fresh_ns;		/* newest fresh demand seen */
 };
 
 /*
@@ -34,5 +36,16 @@ void lw_contract_publish(struct lw_contract *c, unsigned int cluster,
 /* Latest consistent, fresh (max_age_ns) demand record; false if none. */
 bool lw_contract_demand(struct lw_contract *c, unsigned int cluster, uint64_t now_ns,
 			uint64_t max_age_ns, struct lt_demand_rec *out);
+
+/*
+ * Follow Lertick as it starts and stops. Lertick runs are finite, and each run
+ * pins new maps. While detached, try to open every retry_ns. While attached,
+ * detach once no cluster has reported fresh demand for stale_ns. *next_try_ns
+ * is caller state, initially zero. Returns the new attached state; *err_out
+ * (optional) gets the last open result.
+ */
+bool lw_contract_maintain(struct lw_contract *c, bool attached, bool want_write,
+			  uint64_t now_ns, uint64_t retry_ns, uint64_t stale_ns,
+			  uint64_t *next_try_ns, int *err_out);
 
 #endif /* LERWATT_CONTRACT_IO_H */

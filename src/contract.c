@@ -46,7 +46,13 @@ static int map_one(const char *path, size_t value_size, bool write, int *fd_out,
 	long page = sysconf(_SC_PAGESIZE);
 	size_t len;
 	void *mem;
-	int fd = bpf_obj_get(path, write ? 0 : BPF_F_RDONLY);
+	/*
+	 * Always open read-write. mmap(MAP_SHARED) of a read-only file clears
+	 * VM_SHARED, and bpf_map_mmap() rejects a mapping without it (EINVAL).
+	 * A PROT_READ mapping stays read-only: bpf_map_mmap() also drops
+	 * VM_MAYWRITE, so it cannot be made writable later.
+	 */
+	int fd = bpf_obj_get(path, 0);
 
 	if (fd < 0)
 		return -errno;
@@ -186,8 +192,39 @@ bool lw_contract_demand(struct lw_contract *c, unsigned int cluster, uint64_t no
 	}
 	if (!c->lt_valid[cluster])
 		return false;
-	if (now_ns - c->lt_last[cluster].updated_ns > max_age_ns)
+	/* A record written just after now_ns was sampled is fresh, not stale. */
+	if (now_ns > c->lt_last[cluster].updated_ns &&
+	    now_ns - c->lt_last[cluster].updated_ns > max_age_ns)
 		return false;	/* Lertick stopped updating: treat as absent */
+	if (c->lt_last[cluster].updated_ns > c->last_fresh_ns)
+		c->last_fresh_ns = c->lt_last[cluster].updated_ns;
 	*out = c->lt_last[cluster];
+	return true;
+}
+
+bool lw_contract_maintain(struct lw_contract *c, bool attached, bool want_write,
+			  uint64_t now_ns, uint64_t retry_ns, uint64_t stale_ns,
+			  uint64_t *next_try_ns, int *err_out)
+{
+	int ret;
+
+	if (attached) {
+		uint64_t last = c->last_fresh_ns > c->opened_ns ? c->last_fresh_ns : c->opened_ns;
+
+		if (now_ns < last || now_ns - last < stale_ns)
+			return true;
+		lw_contract_close(c);
+		*next_try_ns = now_ns;	/* a restarted Lertick has already pinned new maps */
+		return false;
+	}
+	if (now_ns < *next_try_ns)
+		return false;
+	*next_try_ns = now_ns + retry_ns;
+	ret = lw_contract_open(c, want_write);
+	if (err_out)
+		*err_out = ret;
+	if (ret)
+		return false;
+	c->opened_ns = now_ns;
 	return true;
 }

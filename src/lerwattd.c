@@ -19,6 +19,10 @@
 #include "lerwatt/controller.h"
 #include "lerwatt/hal.h"
 
+/* Lertick runs are finite: look for a new run every second, drop a silent one after 2 s. */
+#define CONTRACT_RETRY_NS 1000000000ull
+#define CONTRACT_STALE_NS 2000000000ull
+
 static volatile sig_atomic_t stop;
 
 static void on_signal(int sig)
@@ -107,6 +111,7 @@ int main(int argc, char **argv)
 	uint64_t start_ns, next_ns, last_ns;
 	int opt, ret = 0;
 	bool have_contract = false;
+	uint64_t contract_next_try = 0;
 
 	while ((opt = getopt_long(argc, argv, "h", opts, NULL)) != -1) {
 		switch (opt) {
@@ -159,10 +164,13 @@ int main(int argc, char **argv)
 		fprintf(stderr, "lerwatt: cannot create the restore journal\n");
 		return 1;
 	}
+	memset(&contract, 0, sizeof(contract));
 	if (use_contract) {
-		int c = lw_contract_open(&contract, true);
+		int c = 0;
 
-		have_contract = c == 0;
+		have_contract = lw_contract_maintain(&contract, false, true, lw_now_ns(),
+						     CONTRACT_RETRY_NS, CONTRACT_STALE_NS,
+						     &contract_next_try, &c);
 		fprintf(stderr, "lerwatt: Lertick contract %s\n",
 			have_contract ? "attached" : c == -ENOENT ? "absent (running alone)" :
 			strerror(-c));
@@ -184,6 +192,16 @@ int main(int argc, char **argv)
 		lw_sample(&sys, &hist, &s);
 		dt = (s.t_ns - last_ns) / 1e9;
 		last_ns = s.t_ns;
+		if (use_contract) {
+			bool was = have_contract;
+
+			have_contract = lw_contract_maintain(&contract, have_contract, true, s.t_ns,
+							     CONTRACT_RETRY_NS, CONTRACT_STALE_NS,
+							     &contract_next_try, NULL);
+			if (have_contract != was)
+				fprintf(stderr, "lerwatt: Lertick contract %s\n",
+					have_contract ? "attached" : "lost (running alone)");
+		}
 		if (tel)
 			fprintf(tel, "{\"t\":%.3f,\"mode\":\"%s\",\"power_w\":%.3f,\"measured\":%s,\"clusters\":[",
 				(s.t_ns - start_ns) / 1e9, sys.simulated ? "sim" : "hw", s.power_w,

@@ -2,14 +2,18 @@
 /*
  * Lerwatt <-> Lertick contract: the only state the two controllers share.
  *
- * Both maps are BPF_MAP_TYPE_ARRAY with BPF_F_MMAPABLE, created and pinned by
- * Lertick under /sys/fs/bpf/lertick/. Key = cluster index, where clusters are
- * the cpufreq policies sorted by their first CPU (RK3588: policy0 -> 0,
- * policy4 -> 1, policy6 -> 2).
+ * Both maps are BPF_MAP_TYPE_ARRAY with BPF_F_MMAPABLE. Lertick creates them
+ * with its BPF object and pins them under /sys/fs/bpf/lertick/ only when it is
+ * started with --lerwatt; it unpins them when it exits. Key = cluster index,
+ * where clusters are the cpufreq policies sorted by their first CPU (RK3588:
+ * policy0 -> 0, policy4 -> 1, policy6 -> 2). Without real cpufreq policies
+ * (a VM), Lertick uses the policies of a running lerwatt-sim and maps CPU N to
+ * simulated CPU N.
  *
  * Every field has exactly one writer:
  *   lw_contract  - written by Lerwatt (userspace, through mmap), read by Lertick (BPF)
- *   lt_demand    - written by Lertick (BPF), read by Lerwatt and by lerwatt-sim
+ *   lt_demand    - written by the Lertick loader (userspace, through mmap) from
+ *                  per-CPU state its BPF program keeps; read by Lerwatt and lerwatt-sim
  *
  * Consistency: seqcount. The writer makes seq odd, writes the fields, then
  * makes seq even. A reader that sees an odd seq, or a different seq before and
@@ -51,15 +55,18 @@ struct lw_contract_rec {
 	__u64 valid_until_ns;		/* CLOCK_MONOTONIC; ignore the record after this */
 };
 
-/* Written by Lertick. 48 bytes. */
+/*
+ * Written by Lertick every 100 ms. 48 bytes. Capacity values use the scale of
+ * scx_bpf_cpuperf_set(): utilization in units where 1024 is the fastest CPU.
+ */
 struct lt_demand_rec {
 	__u32 seq;
 	__u32 version;
-	__u32 pred_util;		/* predicted per-CPU utilization, 0..1024 */
+	__u32 pred_util;		/* smoothed per-CPU utilization, cluster mean, 0..1024 */
 	__u32 cpuperf_max;		/* max scx cpuperf target in the cluster, 0..1024 */
 	__u32 cpuperf_mean;		/* mean scx cpuperf target in the cluster, 0..1024 */
-	__u32 lat_crit_milli;		/* share of demand that is latency-critical, 0..1000 */
-	__u64 p99_wake_ns;		/* recent p99 wake-up latency */
+	__u32 lat_crit_milli;		/* share of sched_ext runtime that is latency-critical, 0..1000 */
+	__u64 p99_wake_ns;		/* p99 wake-up latency, upper edge of its log2 bucket */
 	__u64 updated_ns;		/* CLOCK_MONOTONIC time of the last update */
 	__u64 reserved;
 };

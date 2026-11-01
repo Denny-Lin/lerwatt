@@ -91,6 +91,7 @@ int main(int argc, char **argv)
 	struct sim_load load;
 	struct lw_contract contract;
 	bool have_contract = false;
+	uint64_t contract_next_try = 0;
 	struct sigaction sa = { 0 };
 	double demand[SIM_MAX_CPUS] = { 0 }, max_zone[SIM_MAX_ZONES], next_log = 0;
 	char err[256];
@@ -140,8 +141,10 @@ int main(int argc, char **argv)
 		fprintf(stderr, "lerwatt-sim: %s\n", err);
 		return 1;
 	}
+	memset(&contract, 0, sizeof(contract));
 	if (use_cpuperf)
-		have_contract = lw_contract_open(&contract, false) == 0;
+		have_contract = lw_contract_maintain(&contract, false, false, now_ns(),
+						     1000000000ull, 2000000000ull, &contract_next_try, NULL);
 	if (log_path)
 		log = strcmp(log_path, "-") ? fopen(log_path, "w") : stdout;
 	for (int z = 0; z < SIM_MAX_ZONES; z++)
@@ -162,13 +165,24 @@ int main(int argc, char **argv)
 
 		sim_load_sample(&load, s.t_s, demand);
 		sim_abi_ingest(&abi, &s);
+		if (use_cpuperf) {
+			bool was = have_contract;
+
+			/* Lertick may start, stop or restart while the board runs. */
+			have_contract = lw_contract_maintain(&contract, have_contract, false, now_ns(),
+							     1000000000ull, 2000000000ull,
+							     &contract_next_try, NULL);
+			if (have_contract != was)
+				fprintf(stderr, "lerwatt-sim: Lertick cpuperf %s\n",
+					have_contract ? "attached" : "lost; schedutil uses PELT again");
+		}
 		for (int k = 0; k < sim_rk3588.nclusters; k++) {
 			struct lt_demand_rec d;
 
+			/* As in schedutil: a fresh sched_ext target replaces PELT, even 0. */
 			s.cl[k].cpuperf_req = -1;
 			if (have_contract &&
-			    lw_contract_demand(&contract, (unsigned int)k, now_ns(), 500000000ull, &d) &&
-			    d.cpuperf_max)
+			    lw_contract_demand(&contract, (unsigned int)k, now_ns(), 500000000ull, &d))
 				s.cl[k].cpuperf_req = (int32_t)d.cpuperf_max;
 		}
 		sim_step(&s, demand, dt);
