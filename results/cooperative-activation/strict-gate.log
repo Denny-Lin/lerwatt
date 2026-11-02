@@ -1,0 +1,2 @@
+strict nonregression gate failed; original measurements remain in the report
+Expected nonregression failure, exit_status=1

@@ -333,7 +333,7 @@ integer-valued restoration check, full case records and raw-data hashes.
 
 ### Cooperative prediction and completed work
 
-An opt-in `--prediction cooperative` path now uses action-supported point
+The `--prediction cooperative` path uses action-supported point
 forecasts to tighten MPC decisions through a replaceable prediction interface.
 Nominal mode retains the historical reports exactly. The new finite FIFO
 comparison drains every job and reports makespan, p99, modeled board energy,
@@ -346,7 +346,11 @@ pairs had identical control/forecast outcomes. Two ambient-ramp independent-MPC
 pairs used a corrected query and changed outcomes slightly: makespan rose by
 0.02 and 0.07 s, while modeled board energy fell by about 0.0041% and 0.0021%.
 These small simulated differences are not demonstrated power savings. The
-strict nonregression gate fails, and the new prediction mode remains opt-in.
+strict nonregression gate fails; these adverse results remain unchanged.
+Standalone installations retain nominal prediction by default. Explicitly
+selecting `install --lertick` now defaults to cooperative prediction, with all
+reliability gates retained. This activation policy is not a benchmark win or a
+claim that Lertick improves prediction accuracy.
 See [all measurements, failures and limitations](../results/cooperative-prediction/README.md).
 
 The historical `served` ratio integrates `min(requested rate, available rate)`

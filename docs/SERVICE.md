@@ -71,6 +71,7 @@ The service reads **`/etc/lerwatt/lerwatt.conf`**, a strict data file:
 
 ```text
 policy=mpc
+prediction=nominal
 period_ms=100
 soft_limit_c=auto
 temperature_sensor=auto
@@ -80,6 +81,7 @@ contract=off
 | Key | Accepted value |
 | --- | --- |
 | `policy` | `mpc` or `rule` |
+| `prediction` | `nominal` or `cooperative`; standalone default `nominal`, explicit `install --lertick` default `cooperative` |
 | `period_ms` | Integer `10` through `10000`; `contract=auto` requires `10` through `100` |
 | `soft_limit_c` | `auto`, or a positive Celsius value accepted by the daemon |
 | `temperature_sensor` | `auto`, or an actual CPU/package sensor input under `/sys/` |
@@ -112,7 +114,17 @@ The service fixes the real-machine root and enables unlimited supervised operati
 ./deploy.sh install --lertick --period-ms 100
 ```
 
-This selects the full BPF-capable build and saves `contract=auto`. The helper checks capability and configuration before stopping the old service. A plain reinstall preserves the saved mode; `./deploy.sh install --no-lertick` switches it off. New independent installations retain the BPF-free build. Because settings are root-private, an upgrade without an explicit mode first asks sudo to read the validated mode, then builds as the normal user.
+This selects the full BPF-capable build, saves `contract=auto` and defaults to
+`prediction=cooperative`. `--prediction nominal` explicitly keeps original MPC
+predictions with coordination enabled. The helper checks capability and
+configuration before stopping the old service. A plain reinstall preserves
+both saved modes; `./deploy.sh install --no-lertick` disables coordination and
+defaults back to nominal prediction. An explicit `--prediction` wins over either
+installation flag in any order. New independent installations retain the
+BPF-free build and nominal MPC. Because settings are root-private, an upgrade
+without an explicit mode first asks sudo to read the validated mode, then builds
+as the normal user. Privileged reentry validates the configuration again before
+installing; a build/configuration mismatch fails before stopping the old service.
 
 The scheduler remains a separately installed and enabled project. Either may start first, stop or update independently. Compatible model-only updates need no peer update or joint retraining. Incompatible or expired records disable the handoff while local control continues. See the identical [integration guide](INTEGRATION.md) in both repositories for setup, ownership, ABI compatibility and failure behavior.
 
@@ -198,13 +210,22 @@ Portable and fixture tests also cover checkpoint rejection, notifications, worke
 
 References: systemd's [restart/watchdog and stop hooks](https://www.freedesktop.org/software/systemd/man/latest/systemd.service.html), [notification protocol](https://www.freedesktop.org/software/systemd/man/latest/sd_notify.html) and [unit lifecycle](https://www.freedesktop.org/software/systemd/man/latest/systemd.unit.html).
 
-## Cooperative prediction opt-in
+## Cooperative prediction activation
 
-The service preserves its selected prediction mode across upgrades. The default
-is `nominal`; existing configs without a `prediction` key keep the original path.
-After target-machine validation, `./deploy.sh install --policy mpc --prediction
-cooperative --period-ms 100` opts into the experimental mode.
+The service preserves its selected prediction mode across plain upgrades.
+New standalone installs default to independent MPC with nominal prediction;
+explicit `install --lertick` defaults to cooperative. Existing configs without
+a `prediction` key retain nominal on plain upgrade, even with coordination
+enabled; explicitly reselecting `--lertick` applies the new default.
+`./deploy.sh install --policy mpc --prediction cooperative --period-ms 100`
+also opts into the experimental mode without requiring Lertick.
 `./deploy.sh install --prediction nominal` returns to the original predictor.
+Existing rule or slow-period settings are not silently overwritten: cooperative
+mode requires MPC and a 10–100 ms period, otherwise installation fails before
+stopping the old service. Select compatible settings or explicit nominal mode.
+The integrated default does not imply better accuracy. Enabled prediction still
+uses nominal MPC whenever a correction fails its reliability checks. Rule
+fallback remains available when the required model is unavailable or invalid.
 Watchdog, recovery, initial user bounds and Lertick settings are retained. Mode
 changes invalidate incompatible model checkpoint fingerprints. See
 [the implementation and limits](COOPERATIVE_PREDICTION.md) and

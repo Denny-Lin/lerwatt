@@ -63,7 +63,8 @@ def main():
     parser.add_argument("--daemon", default="build/lerwattd-standalone")
     parser.add_argument("--with-lertick", action="store_true",
                         help="install BPF-capable optional coordination; absent peer must remain independent")
-    parser.add_argument("--prediction", choices=("nominal", "cooperative"), default="nominal")
+    parser.add_argument("--prediction", choices=("nominal", "cooperative"),
+                        help="Override installation default (standalone nominal; --with-lertick cooperative)")
     options = parser.parse_args()
     if not options.allow_systemd_test or sys.platform != "linux" or os.geteuid() != 0 or not virtual_machine():
         parser.error("requires explicit --allow-systemd-test as root in a disposable QEMU/KVM VM")
@@ -149,7 +150,9 @@ def main():
     result = {}
     try:
         install_arguments = ["--lertick"] if options.with_lertick else []
-        install_arguments += ["--prediction", options.prediction]
+        if options.prediction:
+            install_arguments += ["--prediction", options.prediction]
+        expected_prediction = options.prediction or ("cooperative" if options.with_lertick else "nominal")
         installed = call(str(helper), "install", *install_arguments, env=environment)
         assert "running continuously" in installed.stdout, installed.stdout + installed.stderr
         pid = wait_for(healthy, "service never became ready")
@@ -159,7 +162,9 @@ def main():
         duration = command.index(b"--duration")
         assert command[duration + 1] == b"0" and b"--watchdog" in command
         prediction = command.index(b"--prediction")
-        assert command[prediction + 1].decode() == options.prediction
+        assert command[prediction + 1].decode() == expected_prediction
+        assert f"prediction={expected_prediction}" in (work / "config/lerwatt.conf").read_text()
+        result["installation_prediction_mode"] = expected_prediction
         if options.with_lertick:
             assert b"--no-contract" not in command
             assert "contract=auto" in (work / "config/lerwatt.conf").read_text()
@@ -169,7 +174,7 @@ def main():
         time.sleep(2)
         assert current_pid() == pid and healthy()
         result["enabled_unlimited_ready"] = True
-        print("systemd: install enabled an unlimited ready worker", flush=True)
+        print(f"systemd: install enabled an unlimited ready worker ({expected_prediction})", flush=True)
 
         # A stopped loop cannot fake progress; real PID1 must expire it,
         # restore controls through ExecStopPost, and start a fresh worker.

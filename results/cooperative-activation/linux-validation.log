@@ -1,0 +1,49 @@
+make: Nothing to be done for 'all'.
+python3 tests/check_integration_abi.py
+Integration ABI 2 golden check passed (56 values).
+build/test_runtime_fs
+lerwatt: cannot journal /tmp/lerwatt-runtime-inz5Qn/sys/devices/system/cpu/cpufreq/policy0/scaling_max_freq (Is a directory); not writing it
+lerwatt: write /tmp/lerwatt-runtime-inz5Qn/sys/devices/system/cpu/cpufreq/policy0/scaling_max_freq <- 1500 failed: Is a directory
+lerwatt: restore failed: /tmp/lerwatt-runtime-inz5Qn/sys/devices/system/cpu/cpufreq/policy0/scaling_max_freq <- 2000
+test_runtime_fs: ok (strict reads, lock lifetime, journal faults, restore validation)
+build/test_discovery
+test_discovery: topology, frequency, sensor and read-only capability fixtures passed
+build/test_notify
+test_notify: environment validation, readiness, progress heartbeats and socket failure passed
+build/test_checkpoint
+test_checkpoint: learned-only roundtrip, identity/schema/age validation and private atomic files passed
+build/test_contract
+test_contract: ABI2 identity, independent peer versions, bounded freshness and recovery passed
+python3 tests/test_daemon_deployment.py build/lerwattd-standalone
+daemon deployment: CLI, read-only checks, 16-policy range control, locking, recovery and sensor loss passed
+sh tests/test_deploy.sh
+test_deploy: all checks passed (fixtures only; no host service or CPU changes)
+tests/e2e.sh build
+e2e: ok - joint planning requires the learned policy
+e2e: ok - unknown point forecaster is rejected before touching a system
+e2e: ok - prediction mode and unsupported combinations are rejected before discovery
+e2e: ok - no hardware and no simulator -> clear error
+e2e: ok - simulator up, policy4 scaling_max_freq = 2400000
+e2e: ok - live root rejects a second simulator, including --force
+e2e: ok - auto-detected the simulator
+e2e: ok - lerwattd capped big0 down to 1200 MHz while the board ran hot
+e2e: ok - clean exit restored every knob and removed the journal
+e2e: ok - joint-policy startup falls back before training and restores knobs
+e2e: ok - cooperative cold start keeps fallback, valid telemetry and restoration
+e2e: ok - kill -9 then --restore recovered scaling_max_freq = 2400000
+e2e: ok - simulator removed its marker on exit
+e2e: ok - same root restarts after SIGTERM, duration expiry and SIGINT; data preserved
+e2e: ok - unidentified non-empty roots remain protected
+e2e: all checks passed
+control influence: original 2400000, cooperative 1800000, raw guard 1200000 kHz
+test_predict: action support, delayed learning, pure queries, backend replacement and MPC influence passed (14368 bytes/predictor)
+systemd: install enabled an unlimited ready worker (nominal)
+systemd: stopped worker was recovered and restarted
+systemd: missing sensor restored controls; returning sensor recovered service
+systemd: uninstall stopped, disabled and restored the validation service
+{"result": "passed", "checks": {"installation_prediction_mode": "nominal", "enabled_unlimited_ready": true, "watchdog_restores_and_restarts": true, "sensor_failure_recovers": true, "uninstall_stops_disables_restores": true}, "hardware": "temporary file fixture"}
+systemd: install enabled an unlimited ready worker (cooperative)
+systemd: stopped worker was recovered and restarted
+systemd: missing sensor restored controls; returning sensor recovered service
+systemd: uninstall stopped, disabled and restored the validation service
+{"result": "passed", "checks": {"installation_prediction_mode": "cooperative", "optional_coordination_waits_independently": true, "enabled_unlimited_ready": true, "watchdog_restores_and_restarts": true, "sensor_failure_recovers": true, "uninstall_stops_disables_restores": true}, "hardware": "temporary file fixture"}

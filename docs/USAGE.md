@@ -133,14 +133,14 @@ The daemon exits after five minutes; Ctrl-C stops it earlier. Normal exit, SIGIN
 | `--policy mpc --cross-cluster` | Searches a bounded combination of frequency choices across clusters using their thermal models and estimated power. |
 | `--forecast temporal` (MPC default) | Reports a five-second point forecast with a delayed-label temperature-history correction. |
 | `--forecast adaptive` | Reports the previous expert-blend point forecast for comparison. |
-| `--prediction nominal` (default) | Keeps the original thermal MPC and point-forecast separation. |
+| `--prediction nominal` (raw CLI and standalone-install default) | Keeps the original thermal MPC and point-forecast separation. |
 | `--prediction cooperative` | Uses fresh, action-supported five-second point evidence to tighten MPC predictions. Requires MPC, temporal forecasts and a 10–100 ms period; longer/unseen actions retain the nominal model. |
 
 The thermal model needs at least about 90 seconds of suitable observations; a hot start or insufficient load variation can take longer. Raw launches still start fresh unless `--model-state` is selected. The managed service saves and reloads validated long-term thermal parameters; transient control, recent peaks, load history and pending point forecasts start fresh. Checkpoints have hardware/configuration fingerprints, a format version and a 30-day age bound. [Checkpoint behavior](SERVICE.md#learned-thermal-state).
 
 Joint planning requires trained models, valid temperature inputs, nonzero power estimates and at most 65,536 frequency combinations. Otherwise independent control continues. Its power inputs can come from the Energy Model or the relative proxy; proxy-based planning does not establish a physical-watt optimum.
 
-Telemetry separates `pred_c` (planning prediction) from `forecast_c` (expected temperature five seconds ahead). In default `nominal` mode, the point forecast does not influence ceilings. Opt-in `cooperative` mode can tighten five-second MPC decisions within its supported action domain, while preserving the original raw guard and thermal limits. [Cooperative prediction and telemetry](COOPERATIVE_PREDICTION.md). `model` and `joint` indicate thermal-model readiness and joint-planner activation; `-1` indicates an unavailable temperature prediction. See [forecast telemetry and fallback](../results/point-model-observations/README.md#runtime-and-telemetry).
+Telemetry separates `pred_c` (planning prediction) from `forecast_c` (expected temperature five seconds ahead). In `nominal` mode, the point forecast does not influence ceilings. Cooperative mode can tighten five-second MPC decisions within its supported action domain, while preserving the original raw guard and thermal limits. It is explicit opt-in for standalone installs and the default when `install --lertick` is explicitly selected. Enabled does not mean every correction is applied: unsupported or unreliable corrections retain nominal MPC predictions. [Cooperative prediction and telemetry](COOPERATIVE_PREDICTION.md). `model` and `joint` indicate thermal-model readiness and joint-planner activation; `-1` indicates an unavailable temperature prediction. See [forecast telemetry and fallback](../results/point-model-observations/README.md#runtime-and-telemetry).
 
 `--telemetry FILE` creates a **new** file with mode `0600`; existing files, symlinks, hardlinks, FIFOs and devices are rejected instead of appended to. Choose a fresh filename for each run. `--telemetry -` writes to stdout, so ordinary shell redirection can create a user-owned log. Use an output directory you trust; log size is not rotated or capped automatically.
 
@@ -203,7 +203,16 @@ For persistent native use, run this from the Lerwatt checkout:
 ./deploy.sh install --lertick --period-ms 100
 ```
 
-This builds the full daemon without libbpf, persists `contract=auto` and keeps Lerwatt's watchdog/recovery. Install Lertick separately, then use `lertick integration on` and `lertick enable`. Lertick installation alone does not enable its service. Plain upgrades preserve modes; `./deploy.sh install --no-lertick` and `lertick integration off` turn the link off.
+This builds the full daemon without libbpf, persists `contract=auto`, defaults
+to `prediction=cooperative` and keeps Lerwatt's watchdog/recovery. Install
+Lertick separately, then use `lertick integration on` and `lertick enable`.
+Lertick installation alone changes neither Lerwatt's prediction mode nor its
+accuracy and does not enable Lertick's service. Plain upgrades preserve modes.
+`./deploy.sh install --no-lertick` turns the Lerwatt link off and defaults back
+to nominal; `lertick integration off` changes only the scheduler's link.
+Explicit `--prediction` takes precedence in either installation mode. A saved
+rule policy or period above 100 ms must be explicitly adjusted before enabling
+cooperative prediction, or retained with `--prediction nominal`.
 
 Either controller may start first. ABI 2 checks policy topology, attachment identity and freshness; unavailable or incompatible peers leave independent operation. Models remain private and compatible model changes do not require joint retraining. The [shared integration guide](INTEGRATION.md) covers installation, status, independent upgrades and exact protocol rules.
 

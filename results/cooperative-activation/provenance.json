@@ -1,0 +1,23 @@
+{
+  "baseline_commit": "d647c97f7599e57a7a45f02f38cdf13a85c132ca",
+  "recorded_utc": "2026-11-02T16:47:25.192942+00:00",
+  "modified_source_sha256": {
+    "deploy.sh": "161d5aee1242ea9022c9f91da47a112b3026c8e21e6d5bfe493fbec3bd0ef2b5",
+    "tests/test_deploy.sh": "3b3d0337a8762c8c3a532d479edadb43c7222aae6ea7bfd8b03c559a26a314cb",
+    "tests/test_service_systemd.py": "ce76b4a5ced977a49805551c5918e6c6824981b50adfb26ee9c9fc60aa7dfaf4"
+  },
+  "controller_predictor_and_historical_evidence_unchanged": true,
+  "evidence_sha256": {
+    "README.md": "25d7b7cf13dea49159ed74438ac7ea0a9c2138797339c5ede615643c1ecd4f76",
+    "abi.log": "33fffb98dbcd473ff040a45a455456219c1c7fdc475e41ba86210a240f313ce8",
+    "control-summary.json": "903edd64d52893e84da49ee8fc0f79189effe5297486b879be9b3d43cf885f41",
+    "deployment-tests.log": "565b6cb0d04952400ec611f7841d379cba9312824c77f59df96655019453c259",
+    "finite-jobs.jsonl": "80afca266486a682d716c250e2689daf772f1c921083c11e055ef7155ae4cf02",
+    "first-attempt-failure.log": "c73af2619f1c4ec3d425824a512e0d1318c360d2419408980e87b50275067295",
+    "linux-source-identity.json": "04090a3164b87d5ca28b4a288f6bca5f00bc82fed576d424a1b3793a5865190a",
+    "linux-validation.log": "e8e3893cbd82c1ea0f7d7d393a896bccf3cd5f25dc28351295b42be3c0e7f4d2",
+    "portable-tests.log": "1a6d0a1774b3b8f4a54f4e53234abd035fc6f96bf8ce500a7f65f37925a20470",
+    "strict-gate.log": "b7a2e6b718d394f1479e959d91862fab5fa039dba3188d3d4b262f42a16c1862"
+  },
+  "performance_gate": "failed on two preserved pairs; deployment default changed by explicit product choice"
+}
