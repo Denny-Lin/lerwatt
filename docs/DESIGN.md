@@ -1,6 +1,6 @@
 # Lerwatt design
 
-Status: **2026-11-01.** The rule controller, online two-node thermal model,
+Status: **2026-11-02.** The rule controller, online two-node thermal model,
 point forecasts, optional joint MPC, restore journal and Lertick shared-map
 contract are implemented. Both independent operation and three-cluster
 coordination have been exercised in an eight-vCPU ARM64 VM. Frequencies,
@@ -12,8 +12,10 @@ That is a source reference, not a minimum kernel version or a claim of
 compatibility with every driver. Standalone Lerwatt does not require
 sched_ext; Lertick integration has separate kernel and BPF requirements.
 `deploy.sh` builds a BPF-free native daemon on the target Linux machine and
-provides checks, non-actuating preview, supervised foreground trials and
-installation/removal. It never starts QEMU or requires simulator files.
+provides checks, non-actuating preview, foreground trials and a persistent
+systemd service with independent watchdog recovery and learned-parameter
+checkpoints. It never starts QEMU or requires simulator files. See
+[continuous operation](SERVICE.md) for installation and validation boundaries.
 
 Labels below distinguish **implemented**, **upstream interface**, and
 **planned**. An available Linux interface is not an implemented Lerwatt backend.
@@ -173,7 +175,11 @@ or enforce an application P99 constraint.
    a nonblocking lifetime lock, retained through maintenance file changes.
    Normal expiry and SIGINT/SIGTERM/SIGHUP attempt restoration. The
    foreground deployment helper also waits for the child and attempts restore
-   after abnormal exit. If both are killed, manual `--restore` is still needed.
+   after abnormal exit. In service mode, PID1 monitors successful-loop
+   notifications, terminates a stalled worker, runs post-exit restoration and
+   restarts it. Foreground processes killed together can still need manual
+   `--restore`. The service itself runs with no duration limit and is enabled
+   at boot until stopped or uninstalled.
    Per-CPU PM QoS and CPUFreq settings remain shared with other programs;
    external writers and policy changes are not arbitrated by this lock.
 4. `--check`, `--describe` and `--dry-run` do not restore journals or create
@@ -186,6 +192,15 @@ or enforce an application P99 constraint.
    thermal cap. Kernel passive/critical trips and hardware protections remain
    independent. On the RK3588 reference profile the passive/critical trips are
    85/115 C, with Lerwatt's default soft limit below the passive trip.
+6. Service mode detects suspend-clock changes, excessive observation gaps and
+   online-CPU changes. It restores and exits so systemd can rediscover inputs
+   on restart. Startup checks reject known active competing policy services;
+   this is not complete arbitration of later or arbitrary privileged writers.
+7. Optional versioned checkpoints retain validated thermal-model parameters
+   and long-term gains. Hardware/configuration identity and age are checked.
+   Controller bounds, integral state, recent peaks, timing and unfinished
+   point forecasts are not restored. Missing/bad checkpoints use fresh
+   learning; checkpoint write failure does not disable baseline control.
 
 The raw-temperature guard, bounds and tested recovery paths reduce risks;
 they are not a proof of production safety or stability under arbitrary model,
@@ -226,8 +241,9 @@ duplicate IDs and invalid frequency data are rejected. Missing tables use
 intermediate limit requests within the CPUFreq range, rather than just two
 endpoints that could prevent useful capping. These requests are not physical
 OPPs. The Lertick ABI still has eight cluster entries; larger standalone
-systems do not silently become coordinated. CPU hotplug/topology rediscovery
-and arbitration with other power managers are not implemented.
+systems do not silently become coordinated. Service mode stops/restores and
+restarts discovery after online-CPU or resume changes. Fully dynamic topology
+adaptation and arbitration with other power managers are not implemented.
 
 EAS has its own platform prerequisites; enabling sched_ext does not provide
 a learned EAS equivalent. DTPM likewise requires a platform hierarchy and
@@ -281,21 +297,22 @@ decisions; a CPU resume-latency request does not control all of them.
 
 Delivery is incremental:
 
-1. **Native hardware-trial helper (implemented).** `deploy.sh` builds on the
-   target, checks capabilities and offers preview/run/restore/install/uninstall.
-   Its BPF-free binary avoids modern BPF-header requirements. Installation
-   only copies the daemon/helper; it does not activate control, change other
-   services or enable boot-time operation. `PREFIX`/`DESTDIR` support native
-   installation and inactive staging. No custom distro, kernel or init system
-   is needed for the foreground trial.
+1. **Native deployment helper (implemented).** `deploy.sh` builds on the
+   target and offers checks, preview, foreground trials and service management.
+   Its BPF-free binary avoids modern BPF-header requirements. Default install
+   enables/starts its own persistent systemd unit after checking hardware and
+   known control conflicts. Other managers are not stopped automatically.
+   `install-tools` keeps a service-free path for other init systems;
+   `PREFIX`/`DESTDIR` support tools-only staging without host service changes.
 2. **Lifecycle guards (implemented), wider delivery (future).** Controller/
    restore locking, validated discovery, explicit sensor selection, strict CLI
    validation, non-actuating dry-run and failure-preserving recovery are in
    place. Linux file fixtures and shell-supervision tests exercise failure
-   paths without controlling host hardware. Distribution packages and optional
-   service integration remain separate future work. A service must preserve
-   recovery data and clean up abnormal exits; it must not activate unsupported
-   control merely because package installation succeeded.
+   paths without controlling host hardware. Real PID1 fixture tests additionally
+   cover enabled unlimited operation, watchdog restart, sensor-loss recovery
+   and stop/disable/restore on uninstall. Distribution packages, additional init
+   integrations and continuous 24-hour/seven-day physical-hardware validation
+   remain future work. Failed restoration preserves its journal and tools.
 3. **Optional CPUFreq/devfreq policy add-ons.** Native loadable governors have
    registration APIs, but require a compatible driver, kernel build/API and
    permitted governor switching. A selected `userspace` governor can also

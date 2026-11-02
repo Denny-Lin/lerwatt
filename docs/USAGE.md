@@ -6,7 +6,7 @@ Detailed requirements, installation, control modes and recovery for Lerwatt. Run
 
 ## Compatibility
 
-The deployment helper builds on the target machine and checks actual Linux interfaces instead of guessing from a distribution or kernel version number. It supports native installation and foreground trials; it does not require systemd or install a background service.
+The deployment helper builds on the target machine and checks actual Linux interfaces instead of guessing from a distribution or kernel version number. Default installation enables and starts a persistent systemd service. Foreground trials and `install-tools` remain available without systemd. See [continuous operation and watchdog recovery](SERVICE.md).
 
 | Component | Current requirement or behavior |
 | --- | --- |
@@ -21,9 +21,9 @@ Deployment environments actually tested on **2026-11-01 (America/Los_Angeles)**:
 
 | Ubuntu version | Architecture and environment | Checks completed |
 | --- | --- | --- |
-| 22.04.5 LTS | ARM64 and emulated x86_64 containers; GCC 11.4, glibc 2.35 | Build, deployment/recovery fixtures, ordinary-user sudo install, restore and uninstall |
-| 24.04.4 LTS | ARM64, isolated container; GCC 13.3, glibc 2.39 | Native build, deployment/recovery fixtures, ordinary-user sudo install, restore and uninstall |
-| 24.04.5 LTS | Emulated x86_64 container; GCC 13.3, glibc 2.39 | Build, deployment/recovery fixtures, ordinary-user sudo install, restore and uninstall |
+| 22.04.5 LTS | ARM64 and emulated x86_64 containers; GCC 11.4, glibc 2.35 | Build, deployment/recovery fixtures, ordinary-user sudo tools-only install, restore and uninstall |
+| 24.04.4 LTS | ARM64, isolated container; GCC 13.3, glibc 2.39 | Native build, deployment/recovery fixtures, ordinary-user sudo tools-only install, restore and uninstall |
+| 24.04.5 LTS | Emulated x86_64 container; GCC 13.3, glibc 2.39 | Build, deployment/recovery fixtures, ordinary-user sudo tools-only install, restore and uninstall |
 | 24.04.5 LTS | ARM64 VM, Linux 7.0.0-38-generic; GCC 13.3, glibc 2.39 | Native build, deployment/recovery fixtures, model/control tests and simulator end-to-end recovery |
 
 These are software and installation checks with temporary control fixtures. Container tests share the container host's kernel; they do not validate Ubuntu's stock kernel or physical CPU, sensors, energy savings or battery life. Emulated x86_64 execution checks userspace behavior, not physical x86 hardware. The CI matrix above describes configured jobs; the local results here are reported separately. Ubuntu versions not listed here have not been verified in this deployment pass.
@@ -51,8 +51,9 @@ sudo apt-get install --no-install-recommends git build-essential ca-certificates
 git clone https://github.com/Denny-Lin/lerwatt.git
 cd lerwatt
 ./deploy.sh check
-./deploy.sh preview --duration 60
-./deploy.sh run --duration 300 --telemetry lerwatt-hardware.jsonl
+./deploy.sh install
+lerwatt status
+lerwatt logs
 ```
 
 Run these commands as your normal user. The helper builds `build/lerwattd-standalone` locally and requests sudo only for hardware checks/control or system installation. If already root, build first with `make hardware`. No model download or offline training is needed.
@@ -63,21 +64,23 @@ Run these commands as your normal user. The helper builds `build/lerwattd-standa
 | `./deploy.sh preview` | Learn and log without changing CPU limits or publishing scheduler control. |
 | `./deploy.sh run` | Check first, then run MPC for 300 seconds by default and restore when the child exits. Ctrl-C stops the trial. |
 | `./deploy.sh restore` | Restore the real-machine recovery journal; refuse if another controller holds the lock. |
-| `./deploy.sh install` | Install the daemon and `lerwatt` helper under `/usr/local`; do not start or enable a service. |
-| `./deploy.sh uninstall` | Restore successfully before removing installed files; keep files when recovery fails or a controller is active. |
+| `./deploy.sh install` | Install the tools and systemd unit, enable at boot and start continuous operation after checks pass. |
+| `./deploy.sh install-tools` | Install tools only; no service activation. Useful with other init systems. |
+| `lerwatt status`, `lerwatt logs` | Inspect the managed service and recent journal messages. |
+| `lerwatt start`, `lerwatt stop`, `lerwatt restart` | Manage continuous control; stopping restores settings. |
+| `./deploy.sh uninstall` | Stop/disable the owned service, restore before removal, and keep recovery tools/data on failure. |
 
 To install the commands for use outside the checkout:
 
 ```sh
 ./deploy.sh install
-lerwatt check
-lerwatt preview --duration 60
-lerwatt run --duration 300
+lerwatt status
+lerwatt logs
 ```
 
-**No reboot is required to install or start a trial.** This installs a userspace daemon and helper using the existing CPUFreq/PM QoS interfaces; it does not replace the kernel, load a Lerwatt kernel module or change boot configuration. Installation does not start control. If a previous trial left a journal, installation restores it first. `lerwatt run` starts control in the foreground; Ctrl-C or normal expiry stops it and attempts restoration. No service is enabled, and control does not automatically resume after reboot. If the hardware check fails, address the reported requirement before running a trial; installing the files alone cannot add missing driver or sensor support.
+**No reboot is required to install or start.** This installs a userspace daemon and helper using existing CPUFreq/PM QoS interfaces. Default installation starts continuous control and enables the service at boot. systemd independently supervises the worker and restarts after failures; stopping or uninstalling attempts restoration. `install-tools` opts out of service changes. A failed hardware or control-ownership check prevents activation. [Persistent service details](SERVICE.md).
 
-`PREFIX` changes the install location; `DESTDIR` supports staging without running the daemon or touching host settings. `make install` and `make uninstall` call the same helper. Neither command downloads dependencies, changes the governor, disables other power managers or enables boot-time control.
+`PREFIX` changes the install location; `DESTDIR` supports files-only staging without running the daemon, sudo or systemctl. `make install` and `make uninstall` call the same helper. No dependencies are downloaded, governors changed or other power managers stopped automatically. Default installation changes boot-time behavior by enabling its own unit.
 
 System installation requires a root-owned destination and ancestors with no group/other write permission or symbolic-link components. Use the default `/usr/local`, or another protected prefix such as `/opt/lerwatt`. Package staging should run as a normal user. Run privileged commands only from a trusted checkout; installation does not authenticate downloaded source code.
 
@@ -110,7 +113,7 @@ Dry-run does not write control knobs, publish contract records, restore old sett
 
 ### 3. Try learned control in the foreground
 
-After reviewing discovery and the preview, run a finite standalone trial:
+Before service installation, or after `lerwatt stop`, run a finite standalone trial. An active service holds the shared controller lock; do not run a second active controller alongside it. Start the managed service again with `lerwatt start` after the trial.
 
 ```sh
 sudo build/lerwattd-standalone --sysroot / --policy mpc --no-contract \
@@ -131,7 +134,7 @@ The daemon exits after five minutes; Ctrl-C stops it earlier. Normal exit, SIGIN
 | `--forecast temporal` (MPC default) | Reports a five-second point forecast with a delayed-label temperature-history correction. |
 | `--forecast adaptive` | Reports the previous expert-blend point forecast for comparison. |
 
-The thermal model needs at least about 90 seconds of suitable observations; a hot start or insufficient load variation can take longer. Models start fresh on every daemon launch: model checkpoint/load is not implemented.
+The thermal model needs at least about 90 seconds of suitable observations; a hot start or insufficient load variation can take longer. Raw launches still start fresh unless `--model-state` is selected. The managed service saves and reloads validated long-term thermal parameters; transient control, recent peaks, load history and pending point forecasts start fresh. Checkpoints have hardware/configuration fingerprints, a format version and a 30-day age bound. [Checkpoint behavior](SERVICE.md#learned-thermal-state).
 
 Joint planning requires trained models, valid temperature inputs, nonzero power estimates and at most 65,536 frequency combinations. Otherwise independent control continues. Its power inputs can come from the Energy Model or the relative proxy; proxy-based planning does not establish a physical-watt optimum.
 
@@ -143,7 +146,7 @@ Frequency floors, idle-latency requests and energy prices currently use rules. T
 
 ## Stop, restore and uninstall
 
-Stop with Ctrl-C or let `--duration` expire. The foreground helper waits for the daemon to exit, then attempts restoration, including after an abnormal child exit. It never restores while its child is still running. No background service is created.
+For continuous operation, `lerwatt stop` stops the unit and restores controls; `lerwatt start` resumes it. `lerwatt uninstall` additionally disables automatic startup and removes the managed unit/tools. For a foreground trial, use Ctrl-C or let `--duration` expire; its helper waits for the child and attempts recovery, including abnormal exits.
 
 After an abnormal exit, restore against the **same root** used by that run. For hardware:
 
@@ -151,7 +154,7 @@ After an abnormal exit, restore against the **same root** used by that run. For 
 ./deploy.sh restore
 ```
 
-After installation, `lerwatt restore` is equivalent. Advanced simulator users must use the full daemon with that simulator's exact `--sysroot` and keep its ABI files available until restoration succeeds; the hardware helper always selects `/`.
+After stopping an installed service, `lerwatt restore` is equivalent. Restoration refuses an active controller's lock. Advanced simulator users must use the full daemon with that simulator's exact `--sysroot` and keep its ABI files available until restoration succeeds; the hardware helper always selects `/`.
 
 If both supervisor and daemon are killed, use manual restoration. A subsequent active launch also attempts recovery and refuses control when recovery fails. The journal is `/run/lerwatt/restore.journal` on hardware; the instance-lock file is intentionally retained. Lertick contract expiry does not undo sysfs limits.
 
@@ -161,11 +164,11 @@ To remove an installation after stopping the trial:
 lerwatt uninstall
 ```
 
-You can also use `./deploy.sh uninstall` from the checkout with the same `PREFIX`. Recovery failure prevents removal of the tools. Telemetry and recovery directories are not deleted by uninstall.
+You can also use `./deploy.sh uninstall` from the checkout with the same `PREFIX`. The unit is stopped/disabled first; a recovery failure then prevents removal of the tools and unit so repair remains possible. Configuration, model checkpoints, telemetry and recovery directories are retained.
 
 The controller, restoration and normal install/remove operations share one lock; maintenance keeps it through the file changes. Recovery validates the whole journal before writing and restores frequency ceilings before floors. Keep the journal when recovery reports an error.
 
-For initial hardware trials, remain at the machine and use the finite default duration. CPU hotplug, suspend/resume and competing writers can invalidate the startup snapshot; automatic rediscovery and coordination with other power managers are not implemented. A sensor that stays numeric but stops updating cannot reliably be detected. If both foreground processes are killed, limits can remain until manual restoration or reboot. Kernel and firmware thermal protection must stay enabled. These checks support hardware testing; physical-board safety and performance are still unverified.
+For initial hardware trials, remain at the machine and use the finite default duration. Service mode detects suspend/resume gaps and online-CPU changes, restores and exits so systemd can restart with fresh discovery. Arbitrary hotplug layouts may still fail recovery/checks and leave the service retrying safely. Known policy-service conflicts are checked at startup; later competing writers are not fully arbitrated. A sensor that stays numeric but stops updating cannot reliably be detected. Foreground processes killed together can require manual recovery; the managed service has PID1 watchdog and post-exit restoration. Kernel/firmware protection must stay enabled. Physical-board safety, performance and continuous 24-hour/seven-day operation remain unverified.
 
 ## Try the simulated board
 
@@ -221,8 +224,8 @@ No power-management function inherently requires AI. Learning is useful where pr
 The native helper, capability checks, bounded discovery, controller/restore lock and failure-preserving recovery are implemented. Further work includes:
 
 - Broader hardware-owner reports and per-package sensor mapping for multi-socket systems.
-- Optional distribution packages and background-service integration after the foreground trial path; these are not required to try Lerwatt.
-- Hotplug/resume rediscovery and explicit arbitration with other power-management services.
+- Optional distribution packages and support for additional init systems; systemd service integration is implemented.
+- Broader hotplug/resume validation and full arbitration with other power-management services.
 
 Kernel-policy replacements remain a separate extension path: installing the current daemon does not by itself replace a governor's normal decision path.
 

@@ -23,7 +23,7 @@ CPPFLAGS += -DLERWATT_VERSION=\"$(VERSION)\"
 
 HAL_SRCS := src/hal_fs.c src/hal_discover.c src/hal_sample.c src/hal_actuate.c
 CTL_SRCS := src/controller.c src/learn.c src/forecast.c src/temporal.c
-D_SRCS   := $(HAL_SRCS) $(CTL_SRCS) src/contract.c src/lerwattd.c
+D_SRCS   := $(HAL_SRCS) $(CTL_SRCS) src/contract.c src/notify.c src/checkpoint.c src/lerwattd.c
 SIM_SRCS := sim/platform_rk3588.c sim/model.c sim/abi.c sim/load.c src/contract.c sim/lerwatt_sim.c
 
 all: $(BUILD)/lerwattd $(BUILD)/lerwatt-sim
@@ -47,9 +47,17 @@ $(BUILD)/test_runtime_fs: tests/test_runtime_fs.c src/hal_fs.c src/hal_actuate.c
 $(BUILD)/test_discovery: tests/test_discovery.c src/hal_discover.c src/hal_sample.c src/hal_fs.c $(wildcard include/lerwatt/*.h src/*.h) | $(BUILD)
 	$(CC) $(CFLAGS) -o $@ tests/test_discovery.c src/hal_discover.c src/hal_sample.c src/hal_fs.c $(LDLIBS)
 
-test-deployment: $(BUILD)/lerwattd-standalone $(BUILD)/test_runtime_fs $(BUILD)/test_discovery
+$(BUILD)/test_notify: tests/test_notify.c src/notify.c src/notify.h | $(BUILD)
+	$(CC) $(CFLAGS) -o $@ tests/test_notify.c src/notify.c $(LDLIBS)
+
+$(BUILD)/test_checkpoint: tests/test_checkpoint.c src/checkpoint.c src/checkpoint.h $(wildcard include/lerwatt/*.h) | $(BUILD)
+	$(CC) $(CFLAGS) -o $@ tests/test_checkpoint.c src/checkpoint.c $(LDLIBS)
+
+test-deployment: $(BUILD)/lerwattd-standalone $(BUILD)/test_runtime_fs $(BUILD)/test_discovery $(BUILD)/test_notify $(BUILD)/test_checkpoint
 	$(BUILD)/test_runtime_fs
 	$(BUILD)/test_discovery
+	$(BUILD)/test_notify
+	$(BUILD)/test_checkpoint
 	python3 tests/test_daemon_deployment.py $(BUILD)/lerwattd-standalone
 	sh tests/test_deploy.sh
 

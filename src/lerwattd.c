@@ -21,8 +21,10 @@
 #include <unistd.h>
 
 #include "contract.h"
+#include "checkpoint.h"
 #include "lerwatt/controller.h"
 #include "lerwatt/hal.h"
+#include "notify.h"
 #include "runtime.h"
 
 #ifndef LERWATT_VERSION
@@ -32,6 +34,7 @@
 /* Lertick runs are finite: look for a new run every second, drop a silent one after 2 s. */
 #define CONTRACT_RETRY_NS 1000000000ull
 #define CONTRACT_STALE_NS 2000000000ull
+#define CHECKPOINT_INTERVAL_NS 300000000000ull
 
 static volatile sig_atomic_t stop;
 
@@ -59,6 +62,8 @@ static void usage(FILE *out)
 		"  --describe         print the discovered system and exit\n"
 		"  --check            check hardware capabilities without changing settings\n"
 		"  --temperature-sensor PATH  explicitly select a CPU/package sensor (millidegC)\n"
+		"  --watchdog         supervised service mode; require systemd notify/watchdog environment\n"
+		"  --model-state FILE persist compatible learned thermal parameters (active control only)\n"
 		"  --version          print build version and exit\n"
 		"  --restore          write back journaled original values and exit\n"
 		"                     optional: -- /absolute/program args (hold recovery lock)\n");
@@ -188,6 +193,24 @@ static int sleep_until(uint64_t deadline_ns)
 	return 0;
 }
 
+/* CLOCK_BOOTTIME includes suspend while the controller's MONOTONIC clock does
+ * not. A resumed service must restore and rediscover rather than reuse stale
+ * topology, samples or controller history. */
+static int boot_clock(uint64_t *value)
+{
+#ifdef CLOCK_BOOTTIME
+	struct timespec now;
+
+	if (clock_gettime(CLOCK_BOOTTIME, &now))
+		return -errno;
+	*value = (uint64_t)now.tv_sec * 1000000000ull + (uint64_t)now.tv_nsec;
+	return 0;
+#else
+	(void)value;
+	return -ENOTSUP;
+#endif
+}
+
 int main(int argc, char **argv)
 {
 	static const struct option opts[] = {
@@ -204,18 +227,22 @@ int main(int argc, char **argv)
 		{ "describe", no_argument, NULL, 'D' },
 		{ "check", no_argument, NULL, 'C' },
 		{ "temperature-sensor", required_argument, NULL, 'S' },
+		{ "watchdog", no_argument, NULL, 'W' },
+		{ "model-state", required_argument, NULL, 'M' },
 		{ "version", no_argument, NULL, 'V' },
 		{ "restore", no_argument, NULL, 'R' },
 		{ "help", no_argument, NULL, 'h' },
 		{ 0 }
 	};
-	const char *sysroot = NULL, *telemetry = NULL, *sensor_path = NULL;
+	const char *sysroot = NULL, *telemetry = NULL, *sensor_path = NULL, *model_path = NULL;
 	unsigned int period_ms = 100;
 	double duration_s = 0, soft_c = 0;
 	bool dry_run = false, use_contract = true, describe = false, restore = false;
 	bool cross_cluster = false;
 	bool check = false, actuator_ready = false, started = false;
 	bool temporal_forecast = true;
+	bool watchdog = false, checkpoint_loaded = false;
+	struct lw_notify notifier = { .fd = -1 };
 	static struct lw_system sys;
 	static struct lw_ctl_state st[LW_MAX_POLICIES];
 	struct lw_ctl_params params;
@@ -224,9 +251,12 @@ int main(int argc, char **argv)
 	struct lw_cpustat hist = { 0 };
 	struct sigaction sa = { 0 };
 	char err[256];
+	char online_path[LW_PATH_MAX], online_cpus[LW_MAX_CPUS * 12];
 	FILE *tel = NULL;
-	uint64_t start_ns, next_ns, last_ns;
+	uint64_t start_ns = 0, next_ns = 0, last_ns = 0;
 	uint64_t duration_deadline_ns = 0;
+	uint64_t next_checkpoint_ns = 0, boot_offset_ns = 0;
+	uint64_t next_topology_ns = 0;
 	int opt, ret = 0;
 	int lock_fd = -1;
 	bool have_contract = false;
@@ -276,6 +306,8 @@ int main(int argc, char **argv)
 		case 'D': describe = true; break;
 		case 'C': check = true; break;
 		case 'S': sensor_path = optarg; break;
+		case 'W': watchdog = true; break;
+		case 'M': model_path = optarg; break;
 		case 'V': printf("lerwattd %s\n", LERWATT_VERSION); return 0;
 		case 'R': restore = true; break;
 		case 'h': usage(stdout); return 0;
@@ -290,6 +322,14 @@ int main(int argc, char **argv)
 	}
 	if (period_ms < 10 || period_ms > 10000) {
 		fprintf(stderr, "lerwatt: --period-ms must be 10..10000\n");
+		return 1;
+	}
+	if ((watchdog || model_path) && (dry_run || describe || check || restore)) {
+		fprintf(stderr, "lerwatt: --watchdog and --model-state require active control\n");
+		return 1;
+	}
+	if (model_path && (model_path[0] != '/' || strlen(model_path) >= LW_PATH_MAX)) {
+		fprintf(stderr, "lerwatt: --model-state must be a bounded absolute path\n");
 		return 1;
 	}
 	if (cross_cluster && policy != LW_POLICY_MPC) {
@@ -371,6 +411,22 @@ int main(int argc, char **argv)
 		params.soft_limit_mc = (int32_t)(soft_c * 1000.0);
 	fprintf(stderr, "lerwatt: soft limit %.1f degC, period %u ms%s\n",
 		params.soft_limit_mc / 1000.0, period_ms, dry_run ? ", dry run" : "");
+	if (watchdog) {
+		int error = lw_notify_init(&notifier, period_ms);
+
+		if (error) {
+			fprintf(stderr, "lerwatt: invalid service watchdog environment or control period: %s\n",
+				strerror(-error));
+			ret = 2;
+			goto finish;
+		}
+		if (lw_path(&sys, online_path, sizeof(online_path), "/sys/devices/system/cpu/online") ||
+		    lw_read_str(online_path, online_cpus, sizeof(online_cpus)) || !online_cpus[0]) {
+			fprintf(stderr, "lerwatt: service requires a readable online CPU mask\n");
+			ret = 2;
+			goto finish;
+		}
+	}
 
 	if (lw_actuator_init(&sys, &act, dry_run)) {
 		fprintf(stderr, "lerwatt: cannot create the restore journal\n");
@@ -406,6 +462,17 @@ int main(int argc, char **argv)
 	sigaction(SIGPIPE, &sa, NULL);
 
 	start_ns = last_ns = lw_now_ns();
+	if (watchdog) {
+		uint64_t boot_ns;
+
+		if (boot_clock(&boot_ns) || boot_ns < start_ns) {
+			fprintf(stderr, "lerwatt: cannot establish service suspend clock\n");
+			ret = 2;
+			goto finish;
+		}
+		boot_offset_ns = boot_ns - start_ns;
+	}
+	next_checkpoint_ns = start_ns + CHECKPOINT_INTERVAL_NS;
 	if (duration_s > 0) {
 		uint64_t duration_ns = (uint64_t)(duration_s * 1e9);
 
@@ -418,6 +485,31 @@ int main(int argc, char **argv)
 		struct lw_sample s;
 		struct lw_actuation a = { 0 };
 		double dt;
+		if (watchdog) {
+			uint64_t mono_ns = lw_now_ns(), boot_ns;
+			uint64_t maximum_gap_ns = (uint64_t)period_ms * 5000000ull;
+
+			if (maximum_gap_ns < 5000000000ull)
+				maximum_gap_ns = 5000000000ull;
+			if (boot_clock(&boot_ns) || mono_ns < last_ns ||
+			    mono_ns - last_ns > maximum_gap_ns || boot_ns < mono_ns ||
+			    boot_ns - mono_ns > boot_offset_ns + 1000000000ull) {
+				fprintf(stderr, "lerwatt: service resumed or control observations became stale; stopping and restoring settings\n");
+				ret = 2;
+				break;
+			}
+			if (mono_ns >= next_topology_ns) {
+				char current_cpus[sizeof(online_cpus)];
+
+				if (lw_read_str(online_path, current_cpus, sizeof(current_cpus)) ||
+				    strcmp(current_cpus, online_cpus)) {
+					fprintf(stderr, "lerwatt: online CPU topology changed; stopping and restoring settings for rediscovery\n");
+					ret = 2;
+					break;
+				}
+				next_topology_ns = mono_ns + 1000000000ull;
+			}
+		}
 
 		if (duration_s > 0 && lw_now_ns() >= duration_deadline_ns)
 			break;
@@ -483,6 +575,16 @@ int main(int argc, char **argv)
 		}
 		lw_ctl_step_group(&params, inputs, st, outputs, sys.npolicies,
 				  s.t_ns, dt > 0 ? dt : period_ms / 1000.0);
+		if (model_path && !checkpoint_loaded) {
+			int error = lw_checkpoint_load(model_path, &sys, &params, st);
+
+			checkpoint_loaded = true;
+			if (!error)
+				fprintf(stderr, "lerwatt: restored compatible learned thermal parameters\n");
+			else if (error != -ENOENT)
+				fprintf(stderr, "lerwatt: ignoring incompatible or unreadable model checkpoint: %s\n",
+					strerror(-error));
+		}
 		for (int i = 0; i < sys.npolicies; i++) {
 			const struct lw_policy *p = &sys.policies[i];
 			const struct lw_ctl_in in = inputs[i];
@@ -537,9 +639,44 @@ int main(int argc, char **argv)
 				break;
 			}
 		}
+		/* Sampling, the first checkpoint read or output I/O can block after
+		 * the loop-entry check. Never apply a plan made from stale observations
+		 * merely because that work eventually returned. */
+		if (watchdog) {
+			uint64_t now = lw_now_ns(), boot_ns;
+			uint64_t maximum_gap_ns = (uint64_t)period_ms * 5000000ull;
+
+			if (maximum_gap_ns < 5000000000ull)
+				maximum_gap_ns = 5000000000ull;
+			if (now < s.t_ns || now - s.t_ns > maximum_gap_ns ||
+			    boot_clock(&boot_ns) || boot_ns < now ||
+			    boot_ns - now > boot_offset_ns + 1000000000ull) {
+				fprintf(stderr, "lerwatt: CPU observation became stale before actuation; stopping and restoring settings\n");
+				ret = 2;
+				break;
+			}
+		}
 		if (lw_actuate(&sys, &act, &a)) {
 			ret = 2;
 			break;
+		}
+		if (watchdog) {
+			int error = lw_notify_progress(&notifier, lw_now_ns());
+
+			if (error) {
+				fprintf(stderr, "lerwatt: watchdog notification failed; stopping and restoring settings: %s\n",
+					strerror(-error));
+				ret = 2;
+				break;
+			}
+		}
+		if (model_path && lw_now_ns() >= next_checkpoint_ns) {
+			int error = lw_checkpoint_save(model_path, &sys, &params, st);
+
+			if (error)
+				fprintf(stderr, "lerwatt: model checkpoint not saved: %s; continuing with in-memory learning\n",
+					strerror(-error));
+			next_checkpoint_ns = lw_now_ns() + CHECKPOINT_INTERVAL_NS;
 		}
 
 		if (duration_s > 0 && lw_now_ns() >= duration_deadline_ns)
@@ -566,6 +703,14 @@ finish:
 		fprintf(stderr, "lerwatt: restore had failures; run lerwattd --restore\n");
 		ret = 2;
 	}
+	/* Restore controls before optional disk I/O: a slow checkpoint must not
+	 * prolong the limits left by a cleanly stopping controller. */
+	if (started && model_path && !ret) {
+		int error = lw_checkpoint_save(model_path, &sys, &params, st);
+
+		if (error)
+			fprintf(stderr, "lerwatt: model checkpoint not saved at shutdown: %s\n", strerror(-error));
+	}
 	if (started)
 		fprintf(stderr, "lerwatt: stopped after %.1f s, %lu writes, %lu write errors\n",
 			(lw_now_ns() - start_ns) / 1e9, act.writes, act.write_errors);
@@ -573,6 +718,9 @@ finish:
 		fprintf(stderr, "lerwatt: telemetry close failed: %s\n", strerror(errno));
 		ret = 2;
 	}
+	/* Keep systemd's watchdog armed while restoration and final persistence
+	 * run. A blocked cleanup must not announce that supervision can stop. */
+	lw_notify_close(&notifier);
 	if (lock_fd >= 0)
 		close(lock_fd);
 	return ret;

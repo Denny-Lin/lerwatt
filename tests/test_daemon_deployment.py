@@ -5,6 +5,7 @@ from pathlib import Path
 import shlex
 import shutil
 import signal
+import socket
 import subprocess
 import sys
 import tempfile
@@ -22,6 +23,7 @@ def put(root, name, value):
 
 
 def fixture(root, policies=1, temperature=65000):
+    put(root, "sys/devices/system/cpu/online", "0" if policies == 1 else f"0-{policies - 1}")
     for cpu in range(policies):
         base = f"sys/devices/system/cpu/cpufreq/policy{cpu}"
         for name, value in {
@@ -72,12 +74,262 @@ def wait_for(predicate, message):
     raise AssertionError(message)
 
 
+def test_service_watchdog(work, compiler):
+    """Exercise the real control loop against a local notify socket/fixtures."""
+    root = work / "service-cpu"
+    fixture(root, temperature=84000)
+    original = controls(root)
+    socket_path = work / "service-notify.sock"
+    environment = os.environ.copy()
+    environment.pop("WATCHDOG_PID", None)
+    environment["NOTIFY_SOCKET"] = str(socket_path)
+    environment["WATCHDOG_USEC"] = "400000"
+    server = socket.socket(socket.AF_UNIX, socket.SOCK_DGRAM)
+    server.bind(str(socket_path))
+    server.settimeout(2)
+
+    def start(label, *extra, env=None):
+        errors = open(work / f"service-{label}.err", "w+")
+        process = subprocess.Popen(
+            [DAEMON, "--sysroot", str(root), "--no-contract", "--watchdog",
+             "--duration", "0", "--period-ms", "10", *extra],
+            env=env or environment, stdout=subprocess.DEVNULL, stderr=errors)
+        return process, errors
+
+    def collect(errors):
+        errors.seek(0)
+        message = errors.read()
+        errors.close()
+        return message
+
+    def ready():
+        message = server.recv(4096).decode()
+        assert "READY=1" in message and "WATCHDOG=1" in message, message
+        assert all(value < 4800000 for name, value in controls(root).items()
+                   if "scaling_max_freq" in name), "readiness preceded successful actuation"
+
+    def drain():
+        server.settimeout(.01)
+        try:
+            while True:
+                server.recv(4096)
+        except socket.timeout:
+            pass
+        server.settimeout(2)
+
+    try:
+        # Invalid service configuration must never signal readiness.
+        bad_environment = environment.copy()
+        bad_environment["WATCHDOG_PID"] = "2147483647"
+        result = subprocess.run(
+            [DAEMON, "--sysroot", str(root), "--no-contract", "--watchdog"],
+            env=bad_environment, capture_output=True, text=True, timeout=5)
+        assert result.returncode != 0 and "watchdog environment" in result.stderr
+        assert controls(root) == original
+        server.settimeout(.05)
+        try:
+            server.recv(4096)
+            raise AssertionError("invalid watchdog environment emitted readiness")
+        except socket.timeout:
+            pass
+        server.settimeout(2)
+
+        process, errors = start("normal")
+        try:
+            ready()
+            heartbeat = server.recv(4096).decode()
+            assert "WATCHDOG=1" in heartbeat and "READY=" not in heartbeat
+            assert process.poll() is None, "duration 0 unexpectedly expired"
+            process.terminate()
+            assert process.wait(timeout=5) == 0
+            assert controls(root) == original
+        finally:
+            if process.poll() is None:
+                process.kill()
+                process.wait(timeout=5)
+            collect(errors)
+        drain()
+
+        # No background notifier may keep a frozen control loop alive. Mimic
+        # systemd's final SIGKILL, then ExecStopPost's restoration step.
+        process, errors = start("frozen")
+        try:
+            ready()
+            process.send_signal(signal.SIGSTOP)
+            stopped_pid, status = os.waitpid(process.pid, os.WUNTRACED)
+            assert stopped_pid == process.pid and os.WIFSTOPPED(status)
+            drain()
+            server.settimeout(.5)
+            try:
+                server.recv(4096)
+                raise AssertionError("frozen worker continued watchdog heartbeats")
+            except socket.timeout:
+                pass
+            server.settimeout(2)
+            process.kill()
+            process.wait(timeout=5)
+            result = invoke(root, "--restore")
+            assert result.returncode == 0, result.stderr
+            assert controls(root) == original
+        finally:
+            if process.poll() is None:
+                process.kill()
+                process.wait(timeout=5)
+            collect(errors)
+        drain()
+
+        # Newly online CPUs invalidate the discovery snapshot even when the
+        # already-controlled CPUs still report valid statistics.
+        process, errors = start("hotplug")
+        try:
+            ready()
+            put(root, "sys/devices/system/cpu/online", "0-1")
+            assert process.wait(timeout=5) != 0
+            assert controls(root) == original
+            assert "online CPU topology changed" in collect(errors)
+            errors = None
+        finally:
+            if process.poll() is None:
+                process.kill()
+                process.wait(timeout=5)
+            if errors:
+                collect(errors)
+            put(root, "sys/devices/system/cpu/online", "0")
+        drain()
+
+        # Make a checkpoint read consume six seconds of both service clocks.
+        # This is not suspend: their offset stays unchanged, so only a fresh
+        # observation check immediately before actuation can reject the plan.
+        private_state = work / "service-private-state"
+        private_state.mkdir(mode=0o700)
+        delayed_model = private_state / "model.delay"
+        delayed_model.write_bytes(bytes(80))
+        delayed_model.chmod(0o600)
+        delay_source = work / "checkpoint-delay.c"
+        delay_library = work / "checkpoint-delay.so"
+        delay_source.write_text('''#define _GNU_SOURCE
+#include <dlfcn.h>
+#include <stdio.h>
+#include <string.h>
+#include <time.h>
+#include <unistd.h>
+static int delayed;
+ssize_t read(int fd, void *buffer, size_t length)
+{
+    static ssize_t (*real_read)(int, void *, size_t);
+    char descriptor[64], target[4096];
+    if (!real_read) real_read = dlsym(RTLD_NEXT, "read");
+    ssize_t result = real_read(fd, buffer, length);
+    snprintf(descriptor, sizeof(descriptor), "/proc/self/fd/%d", fd);
+    ssize_t size = readlink(descriptor, target, sizeof(target) - 1);
+    if (size > 0) {
+        target[size] = 0;
+        const char *name = strrchr(target, '/');
+        if (result > 0 && name && !strcmp(name, "/model.delay")) delayed = 1;
+    }
+    return result;
+}
+int clock_gettime(clockid_t clock, struct timespec *value)
+{
+    static int (*real_clock)(clockid_t, struct timespec *);
+    if (!real_clock) real_clock = dlsym(RTLD_NEXT, "clock_gettime");
+    int result = real_clock(clock, value);
+    if (!result && delayed && (clock == CLOCK_MONOTONIC || clock == CLOCK_BOOTTIME))
+        value->tv_sec += 6;
+    return result;
+}
+''')
+        subprocess.run(compiler + ["-shared", "-fPIC", "-std=c11", "-o", str(delay_library),
+                                   str(delay_source), "-ldl"], check=True)
+        delay_environment = environment.copy()
+        delay_environment["LD_PRELOAD"] = str(delay_library)
+        process, errors = start("checkpoint-delay", "--model-state", str(delayed_model),
+                                env=delay_environment)
+        try:
+            assert process.wait(timeout=5) != 0
+            assert controls(root) == original, "stale observation changed CPU controls"
+            assert "CPU observation became stale before actuation" in collect(errors)
+            errors = None
+            server.settimeout(.05)
+            try:
+                message = server.recv(4096).decode()
+                raise AssertionError(f"stale observation emitted readiness: {message}")
+            except socket.timeout:
+                pass
+            server.settimeout(2)
+        finally:
+            if process.poll() is None:
+                process.kill()
+                process.wait(timeout=5)
+                invoke(root, "--restore")
+            if errors:
+                collect(errors)
+        drain()
+
+        # A resume creates a BOOTTIME/MONOTONIC offset. Add two seconds only
+        # after the first successful cycle, without actually suspending a host.
+        source = work / "resume-fault.c"
+        library = work / "resume-fault.so"
+        source.write_text('''#define _GNU_SOURCE
+#include <dlfcn.h>
+#include <time.h>
+int clock_gettime(clockid_t clock, struct timespec *value)
+{
+    static int (*real_clock)(clockid_t, struct timespec *);
+    static unsigned boots;
+    if (!real_clock) real_clock = dlsym(RTLD_NEXT, "clock_gettime");
+    int result = real_clock(clock, value);
+    if (!result && clock == CLOCK_BOOTTIME && ++boots > 3) value->tv_sec += 2;
+    return result;
+}
+''')
+        subprocess.run(compiler + ["-shared", "-fPIC", "-std=c11", "-o", str(library),
+                                   str(source), "-ldl"], check=True)
+        resume_environment = environment.copy()
+        resume_environment["LD_PRELOAD"] = str(library)
+        process, errors = start("resume", env=resume_environment)
+        try:
+            assert process.wait(timeout=5) != 0
+            assert controls(root) == original
+            assert "service resumed or control observations became stale" in collect(errors)
+            errors = None
+        finally:
+            if process.poll() is None:
+                process.kill()
+                process.wait(timeout=5)
+            if errors:
+                collect(errors)
+        drain()
+
+        # Once ready, a broken notify channel must stop control and recover.
+        process, errors = start("lost-manager")
+        try:
+            ready()
+            server.close()
+            socket_path.unlink()
+            assert process.wait(timeout=5) != 0
+            assert controls(root) == original
+            assert "watchdog notification failed" in collect(errors)
+            errors = None
+        finally:
+            if process.poll() is None:
+                process.kill()
+                process.wait(timeout=5)
+            if errors:
+                collect(errors)
+    finally:
+        server.close()
+        socket_path.unlink(missing_ok=True)
+
+
 def main():
     for args in [("--duration", "nan"), ("--duration", "-1"),
                  ("--duration", "1s"), ("--period-ms", "100x"),
                  ("--period-ms", "4294967396"), ("--soft-limit", "inf"),
                  ("--soft-limit", "0"), ("--restore", "--dry-run"),
-                 ("--describe", "--check"), ("unexpected",)]:
+                 ("--describe", "--check"), ("--watchdog", "--check"),
+                 ("--watchdog", "--dry-run"), ("--model-state", "relative"),
+                 ("--model-state", "/tmp/model", "--describe"), ("unexpected",)]:
         result = subprocess.run([DAEMON, *args], capture_output=True, timeout=5)
         assert result.returncode > 0, args
 
@@ -90,6 +342,7 @@ def main():
         (poison / "bpf.h").write_text("#error standalone must not include linux/bpf.h\n")
         source = Path(__file__).resolve().parents[1]
         compiler = shlex.split(os.environ.get("CC", "cc"))
+        test_service_watchdog(work, compiler)
         subprocess.run(compiler + ["-std=c11", "-D_GNU_SOURCE", "-DLW_NO_BPF",
                                   "-I", str(poison.parent), "-I", str(source / "include"),
                                   "-I", str(source / "src"), "-c", str(source / "src/contract.c"),

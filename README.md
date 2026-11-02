@@ -15,7 +15,7 @@
 <p align="center">
   <strong>Learns your machine.</strong> Builds a thermal model while it runs.<br />
   <strong>Plans ahead.</strong> Uses that model to choose predictive CPU ceilings.<br />
-  <strong>Easy to try.</strong> Preview, run a finite trial, then restore your settings.
+  <strong>Runs around the clock.</strong> Starts at boot. Restarts after failures. Uninstall to remove.
 </p>
 
 <p align="center">
@@ -28,52 +28,57 @@
 
 ## Get started on Ubuntu
 
-**Ubuntu 22.04 / 24.04 · native Linux · sudo access · no reboot**
+**Ubuntu 22.04 / 24.04 · systemd · sudo access · no reboot**
 
 Use a normal user account. The helper builds locally and asks for sudo when needed.
 
-**1. Install the tools**
+**1. Prepare and check**
 
 ```sh
 sudo apt-get update
 sudo apt-get install --no-install-recommends git build-essential ca-certificates
 git clone https://github.com/Denny-Lin/lerwatt.git
 cd lerwatt
+./deploy.sh check
+```
+
+**2. Install and start continuous control**
+
+```sh
 ./deploy.sh install
 ```
 
-**2. Check your machine and preview**
+Installation enables `lerwatt.service` at boot and starts it immediately. There is no five-minute limit: the service keeps running, including after reboot, until you stop or uninstall it. The installer reports active competing policy services instead of disabling them automatically.
+
+**3. See how it is doing**
 
 ```sh
-lerwatt check
-lerwatt preview --duration 60
+lerwatt status
+lerwatt logs
 ```
 
-Continue after the hardware check passes. Preview leaves CPU control settings unchanged.
-
-**3. Start a five-minute trial**
-
-```sh
-lerwatt run --duration 300
-```
-
-Press **Ctrl-C** to stop early. The helper waits for the controller and attempts to restore the journaled settings. Installation does not start a service or enable control at boot.
+An independent systemd watchdog supervises progress. A stalled worker is stopped, its settings are restored where possible, and the service restarts. Missing sensors pause control through the same recovery path.
 
 ```mermaid
 flowchart LR
-    A[Install] --> B{Check}
-    B -->|Pass| C[Preview]
-    B -->|Fail| D[Fix reported requirement]
-    C --> E[Foreground trial]
-    E --> F[Finish or Ctrl-C]
-    F --> G[Restore settings]
+    A[Install + enable] --> B[Run continuously]
+    B -->|Failure| C[Stop + restore]
+    C --> D[Restart automatically]
+    D --> B
+    B -->|Uninstall| E[Stop + disable + restore]
     classDef default fill:#f5f5f7,stroke:#d2d2d7,color:#1d1d1f
     linkStyle default stroke:#86868b,stroke-width:1.5px
 ```
 
-If recovery reports an error, keep the journal and tools, then retry with `lerwatt restore`. To remove Lerwatt after stopping the trial, run `lerwatt uninstall`.
+To remove Lerwatt and stop automatic startup:
 
-You can also run directly from the checkout with `./deploy.sh check`, `./deploy.sh preview` and `./deploy.sh run`. See the [full guide](docs/USAGE.md#deploy-on-your-own-linux-hardware) for sensor selection, telemetry and other Linux distributions.
+```sh
+lerwatt uninstall
+```
+
+Uninstall stops and disables the service, restores journaled settings, then removes the managed tools and unit. Recovery failures preserve the recovery tools and journal for repair.
+
+Want a trial first? `./deploy.sh preview --duration 60` leaves control settings unchanged; `./deploy.sh run --duration 300` runs a finite foreground trial before installing the service. `install-tools` keeps a tools-only option for other init systems. [Service, configuration and recovery →](docs/SERVICE.md)
 
 ## How it works
 
@@ -94,7 +99,7 @@ flowchart LR
     class K,C linux
 ```
 
-The thermal model learns online; rule control covers warm-up and fallback. Models start fresh each launch, so preview does not pretrain a later run. Suitable learning observations usually take at least about 90 seconds.
+The thermal model learns online; rule control covers warm-up and fallback. The service saves compatible learned thermal parameters every five minutes and on normal shutdown, then reuses them after restart. Fresh learning usually needs at least about 90 seconds of suitable observations. A preview does not pretrain the service; control history and unfinished forecasts are always refreshed.
 
 Linux continues handling frequency transitions, idle-state selection and thermal protection. Learned planning sets CPU frequency ceilings; frequency floors and PM QoS idle-latency constraints currently use rules. The separate five-second point forecast is reported in telemetry; it does not drive control decisions. [Architecture and expansion →](docs/DESIGN.md)
 
@@ -102,11 +107,13 @@ Linux continues handling frequency transitions, idle-state selection and thermal
 
 | Version | Software environments tested | Result |
 | --- | --- | --- |
-| **22.04.5 LTS** | ARM64 and x86_64 containers | Build, deployment tests, user/sudo install, restore and uninstall passed |
-| **24.04.4 LTS** | ARM64 container | Same installation and deployment checks passed |
-| **24.04.5 LTS** | x86_64 container; ARM64 VM | Deployment checks passed; ARM64 also passed model/control and end-to-end tests |
+| **22.04.5 LTS** | ARM64 and x86_64 containers | Build, deployment tests and tools-only installation/recovery passed |
+| **24.04.4 LTS** | ARM64 container | Tools-only installation and deployment checks passed |
+| **24.04.5 LTS** | x86_64 container; ARM64 VM | Tools-only deployment passed; ARM64 also passed model/control and end-to-end tests |
 
 x86_64 execution used emulation. These validate software and installation; physical-board behavior remains to be measured. [Exact environments and compatibility →](docs/USAGE.md#compatibility)
+
+The continuous service has also passed real systemd install, watchdog/restart, sensor-loss recovery and uninstall tests on Ubuntu 24.04.5 ARM64 with temporary CPU-control fixtures. Continuous **24-hour and seven-day physical-hardware runs remain unvalidated**. [Service validation →](docs/SERVICE.md#validation-and-limits)
 
 **Hardware requirements:** usable CPUFreq controls and a CPU temperature input. Known multi-socket systems, offline CPUs in a discovered policy and some sensor/topology layouts are currently unsupported. `lerwatt check` reports missing capabilities. Keep kernel/firmware thermal protection enabled and check for competing power managers before a trial. [Requirements and limitations →](docs/USAGE.md#compatibility)
 
@@ -124,6 +131,7 @@ Physical energy savings, battery life and throughput gains remain unmeasured. Pr
 
 | I want to… | Start here |
 | --- | --- |
+| Configure continuous operation or understand the watchdog | [Persistent service](docs/SERVICE.md) |
 | Select a sensor, log telemetry or recover a trial | [Usage and recovery](docs/USAGE.md) |
 | Understand the AI model and deterministic limits | [Design](docs/DESIGN.md) |
 | Connect the optional Lertick scheduler | [Lertick integration](docs/USAGE.md#optional-lertick-integration) |
