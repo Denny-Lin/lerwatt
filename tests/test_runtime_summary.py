@@ -32,6 +32,9 @@ class RuntimeSummary(unittest.TestCase):
             self.assertEqual(report["macro"]["mae_c"]["change_percent"], -50)
             p = root / next(iter(CASES)) / "scores.json"
             score = json.loads(p.read_text())
+            score["metrics"]["candidate"]["mae_c"] = 1.02
+            p.write_text(json.dumps(score))
+            self.assertTrue(summarize(root)["passed_frozen_accuracy_gate"])
             score["metrics"]["candidate"]["mae_c"] = 1.03
             p.write_text(json.dumps(score))
             self.assertFalse(summarize(root)["passed_frozen_accuracy_gate"])

@@ -17,7 +17,7 @@ def change(old, new):
 
 def summarize(root):
     environment = json.loads((root / "environment.json").read_text())
-    if environment.get("smoke_only") or environment["duration_s"] < 1200 or environment["warmup_s"] < 300:
+    if environment.get("smoke_only") is not False or environment["duration_s"] < 1200 or environment["warmup_s"] < 300:
         raise ValueError("runtime confirmation requires full-length non-smoke observations")
     if set(environment["cases"]) != set(CASES) or len(environment["cases"]) != len(CASES):
         raise ValueError("every declared runtime case is required")
@@ -26,7 +26,7 @@ def summarize(root):
         directory = root / name
         run = json.loads((directory / "run.json").read_text())
         score = json.loads((directory / "scores.json").read_text())
-        if not all(run.get(k) for k in ("completed", "restored_knobs", "journal_removed")):
+        if not all(run.get(k) is True for k in ("completed", "restored_knobs", "journal_removed")):
             raise ValueError(f"incomplete or unrestored runtime case: {name}")
         if run.get("daemon_exit") != 0 or run.get("simulator_exit") != 0:
             raise ValueError(f"nonzero runtime exit: {name}")
@@ -49,8 +49,10 @@ def summarize(root):
         old = sum(row["metrics"]["baseline"][kind] for row in rows) / len(rows)
         new = sum(row["metrics"]["candidate"][kind] for row in rows) / len(rows)
         macro[kind] = {"baseline": old, "candidate": new, "change_percent": change(old, new)}
-    passed = all(v["change_percent"] is not None and v["change_percent"] <= -3 for v in macro.values()) and all(
-        row[kind + "_change_percent"] is not None and row[kind + "_change_percent"] <= 2
+    # Only machine-roundoff tolerance, far below telemetry precision; exact
+    # mathematical 2%/3% boundaries must not fail after floating division.
+    passed = all(v["change_percent"] is not None and v["change_percent"] <= -3 + 1e-9 for v in macro.values()) and all(
+        row[kind + "_change_percent"] is not None and row[kind + "_change_percent"] <= 2 + 1e-9
         for row in rows for kind in ("mae_c", "rmse_c"))
     return {"complete_cases": len(rows), "macro": macro, "cases": rows,
             "passed_frozen_accuracy_gate": passed,

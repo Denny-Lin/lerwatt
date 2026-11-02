@@ -228,7 +228,8 @@ def main():
     names = args.cases.split(",")
     if len(set(names)) != len(names) or set(names) - set(CASES):
         parser.error("unknown or duplicate cases")
-    if Path("/sys/kernel/sched_ext/state").read_text().strip() != "disabled":
+    scx_state = Path("/sys/kernel/sched_ext/state")
+    if scx_state.exists() and scx_state.read_text().strip() != "disabled":
         parser.error("refusing an active sched_ext scheduler")
     output = args.output.resolve()
     output.mkdir(parents=True, exist_ok=False)
