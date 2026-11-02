@@ -115,7 +115,7 @@ def score(path, warmup=300):
 
 
 def knobs(root):
-    names = {"scaling_min_freq", "scaling_max_freq", "disable", "resume_latency_us"}
+    names = {"scaling_min_freq", "scaling_max_freq", "disable", "pm_qos_resume_latency_us"}
     return {str(p.relative_to(root)): p.read_text() for p in (root / "sys/devices/system/cpu").rglob("*")
             if p.is_file() and p.name in names}
 
@@ -149,6 +149,7 @@ def run_case(output, name, duration, warmup):
                 "daemon_command": daemon_command, "started_unix": time.time(), "completed": False}
     save(directory / "run.json", evidence)
     sim, daemon = None, None
+    originals = None
     try:
         with ExitStack() as stack:
             sim = subprocess.Popen(sim_command, stdout=stack.enter_context((directory / "sim.out").open("w")),
@@ -184,6 +185,11 @@ def run_case(output, name, duration, warmup):
     finally:
         stop(daemon)
         stop(sim)
+        if originals is not None:
+            evidence["restored_knobs"] = knobs(root) == originals
+            evidence["journal_removed"] = not (root / "run/lerwatt/restore.journal").exists()
+            if not evidence["restored_knobs"] or not evidence["journal_removed"]:
+                evidence["completed"] = False
         if evidence["completed"]:
             summary = (directory / "sim.err").read_text()
             bad = re.search(r"(\d+) bad writes", summary)

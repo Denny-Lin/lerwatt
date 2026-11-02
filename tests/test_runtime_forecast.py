@@ -6,10 +6,23 @@ from pathlib import Path
 import tempfile
 import unittest
 
-from verify_runtime_forecast import score
+from verify_runtime_forecast import score, knobs
 
 
 class RuntimeForecastScoring(unittest.TestCase):
+    def test_all_actuator_filenames_are_snapshotted(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            files = ["cpufreq/policy0/scaling_min_freq", "cpufreq/policy0/scaling_max_freq",
+                     "cpu0/power/pm_qos_resume_latency_us", "cpu0/cpuidle/state1/disable"]
+            for name in files:
+                p = root / "sys/devices/system/cpu" / name
+                p.parent.mkdir(parents=True, exist_ok=True)
+                p.write_text("0\n")
+            snapshot = knobs(root)
+            self.assertEqual(len(snapshot), 4)
+            self.assertIn("sys/devices/system/cpu/cpu0/power/pm_qos_resume_latency_us", snapshot)
+
     def fixture(self):
         rows = []
         for i in range(201):
