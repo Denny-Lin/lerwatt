@@ -12,7 +12,7 @@ loads tied the reference; the largest gains came from recurring patterns.
 
 **2.7°C cooler and 81% fewer ceiling changes in one simulated burst case.**
 The optional joint MPC also served less work. This 900-second bare-board
-scenario compares joint MPC with Lerwatt's default rule policy:
+scenario compares joint MPC with Lerwatt's rule baseline:
 
 | Metric | Rule baseline | Joint MPC |
 | --- | ---: | ---: |
@@ -23,8 +23,9 @@ scenario compares joint MPC with Lerwatt's default rule policy:
 
 The cooler result costs **0.87 percentage points of served work**. Other cases
 also lose: joint MPC served 73.56% versus rule's 79.25% under passive-cooled load
-steps. **Rule control remains the default.** These are descriptive simulator
-cases, not hardware averages or confidence intervals.
+steps. **Joint planning is opt-in.** Fresh managed-service installations default
+to independent MPC with rule fallback. These are descriptive simulator cases, not hardware
+averages or confidence intervals.
 [All control comparisons and adverse cases →](docs/SIMULATION.md#4-control-and-forecast-results)
 
 **Physical power savings, battery life and application throughput remain
