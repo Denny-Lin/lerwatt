@@ -347,9 +347,9 @@ pairs used a corrected query and changed outcomes slightly: makespan rose by
 0.02 and 0.07 s, while modeled board energy fell by about 0.0041% and 0.0021%.
 These small simulated differences are not demonstrated power savings. The
 strict nonregression gate fails; these adverse results remain unchanged.
-Standalone installations retain nominal prediction by default. Explicitly
-selecting `install --lertick` now defaults to cooperative prediction, with all
-reliability gates retained. This activation policy is not a benchmark win or a
+Standalone installations retain nominal prediction by default. Automatic optional Lertick discovery does not
+change prediction selection; cooperative mode remains separately selectable
+with all reliability gates retained. This activation policy is not a benchmark win or a
 claim that Lertick improves prediction accuracy.
 See [all measurements, failures and limitations](../results/cooperative-prediction/README.md).
 

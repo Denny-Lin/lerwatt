@@ -64,7 +64,7 @@ def main():
     parser.add_argument("--with-lertick", action="store_true",
                         help="install BPF-capable optional coordination; absent peer must remain independent")
     parser.add_argument("--prediction", choices=("nominal", "cooperative"),
-                        help="Override installation default (standalone nominal; --with-lertick cooperative)")
+                        help="Override private prediction mode (default nominal, independent of peer discovery)")
     options = parser.parse_args()
     if not options.allow_systemd_test or sys.platform != "linux" or os.geteuid() != 0 or not virtual_machine():
         parser.error("requires explicit --allow-systemd-test as root in a disposable QEMU/KVM VM")
@@ -110,7 +110,7 @@ def main():
     shutil.copy2(daemon, actual)
     # Test-only wrapper changes only the selected sysroot. Insert before '--'
     # so the lock-held maintenance command and its argv remain intact.
-    wrapper = build / ("lerwattd" if options.with_lertick else "lerwattd-standalone")
+    wrapper = build / "lerwattd"
     wrapper.write_text("#!/usr/bin/python3\nimport os,sys\na=sys.argv[1:]\n"
                        "i=a.index('--') if '--' in a else len(a)\n"
                        f"a[i:i]=['--sysroot',{str(fixture)!r}]\n"
@@ -152,7 +152,7 @@ def main():
         install_arguments = ["--lertick"] if options.with_lertick else []
         if options.prediction:
             install_arguments += ["--prediction", options.prediction]
-        expected_prediction = options.prediction or ("cooperative" if options.with_lertick else "nominal")
+        expected_prediction = options.prediction or "nominal"
         installed = call(str(helper), "install", *install_arguments, env=environment)
         assert "running continuously" in installed.stdout, installed.stdout + installed.stderr
         pid = wait_for(healthy, "service never became ready")
@@ -165,12 +165,11 @@ def main():
         assert command[prediction + 1].decode() == expected_prediction
         assert f"prediction={expected_prediction}" in (work / "config/lerwatt.conf").read_text()
         result["installation_prediction_mode"] = expected_prediction
-        if options.with_lertick:
-            assert b"--no-contract" not in command
-            assert "contract=auto" in (work / "config/lerwatt.conf").read_text()
-            wait_for(lambda: "Lertick: waiting" in property_value("StatusText"),
-                     "absent peer did not report independent waiting state")
-            result["optional_coordination_waits_independently"] = True
+        assert b"--no-contract" not in command
+        assert "contract=auto" in (work / "config/lerwatt.conf").read_text()
+        wait_for(lambda: "Lertick: waiting" in property_value("StatusText"),
+                 "absent peer did not report independent waiting state")
+        result["optional_coordination_waits_independently"] = True
         time.sleep(2)
         assert current_pid() == pid and healthy()
         result["enabled_unlimited_ready"] = True

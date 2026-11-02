@@ -31,11 +31,10 @@ check, preview and run accept:
 install also accepts --policy, --prediction, --period-ms, --soft-limit and
 --temperature-sensor to configure the persistent service.
   --lertick                 Enable optional Lertick coordination (BPF build).
-  --no-lertick              Disable coordination (default for a new install).
-An upgrade preserves its existing coordination setting unless overridden.
-Explicit --lertick defaults to cooperative prediction; --no-lertick defaults
-to nominal. An explicit --prediction overrides either choice, in any order.
-Without these flags, upgrades preserve the saved prediction mode.
+  --no-lertick              Disable automatic coordination explicitly.
+New installations automatically discover compatible running Lertick peers.
+Upgrades preserve saved coordination and prediction settings.
+Coordination never selects or replaces either controller's prediction model.
 Coordination requires a control period of 10..100 ms (default 100 ms).
 
 The service runs continuously, starts at boot and restarts after failures.
@@ -247,7 +246,7 @@ check_competing_services()
 }
 load_service_config()
 {
-    service_policy=mpc; service_prediction=nominal; service_period=100; service_soft=auto; service_sensor=auto; service_contract=off
+    service_policy=mpc; service_prediction=nominal; service_period=100; service_soft=auto; service_sensor=auto; service_contract=auto
     if [ -e "$config" ] || [ -L "$config" ]; then
         trusted_root_path "$config"
         [ -f "$config" ] && [ ! -L "$config" ] || fail 'service config must be a regular file'
@@ -281,27 +280,20 @@ validate_service_mode()
 }
 service_overrides()
 {
-    prediction_override=no; prediction_default=
     while [ "$#" -gt 0 ]; do
         case $1 in
-            --lertick) service_contract=auto; prediction_default=cooperative; shift; continue ;;
-            --no-lertick) service_contract=off; prediction_default=nominal; shift; continue ;;
+            --lertick) service_contract=auto; shift; continue ;;
+            --no-lertick) service_contract=off; shift; continue ;;
         esac
         case $1 in *=*) option=${1%%=*}; value=${1#*=}; shift ;; *) option=$1; value=$2; shift 2 ;; esac
         case $option in
             --policy) service_policy=$value ;;
-            --prediction) service_prediction=$value; prediction_override=yes ;;
+            --prediction) service_prediction=$value ;;
             --period-ms) service_period=$value ;;
             --soft-limit) service_soft=$value ;;
             --temperature-sensor) service_sensor=$value ;;
         esac
     done
-    # Only an explicit installation-mode selection changes the default.
-    # A detected/running peer never selects a model, and plain upgrades keep
-    # saved choices (including explicit opt-outs and legacy nominal configs).
-    if [ "$prediction_override" = no ] && [ -n "$prediction_default" ]; then
-        service_prediction=$prediction_default
-    fi
     validate_service_mode
 }
 select_install_contract()
@@ -324,7 +316,7 @@ require_contract_capability()
 {
     if [ "$service_contract" = auto ]; then
         build_features=$("$daemon" --build-features) || fail 'cannot inspect daemon build capabilities; rebuild from the trusted checkout'
-        [ "$build_features" = contract=bpf ] || fail 'Lertick coordination requires the BPF-enabled daemon; run ./deploy.sh install --lertick from the trusted checkout'
+        [ "$build_features" = contract=bpf ] || fail 'automatic discovery requires the BPF-enabled daemon; rebuild/install from the trusted checkout or explicitly use --no-lertick'
     fi
 }
 write_service_files()

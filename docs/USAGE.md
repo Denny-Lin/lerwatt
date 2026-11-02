@@ -15,7 +15,7 @@ The deployment helper builds on the target machine and checks actual Linux inter
 | Thermal inputs | CPU thermal zones, Intel `x86_pkg_temp`/`coretemp` package sensors, or AMD `k10temp` Tdie. An explicit `--temperature-sensor /sys/...` can select another CPU input in millidegrees C. Missing/ambiguous CPU inputs block the trial. |
 | Idle constraints | Per-CPU `power/pm_qos_resume_latency_us` is optional; absent files are skipped. Per-entry idle-state selection stays with the kernel governor. |
 | Power estimates | A complete Linux Energy Model with identified physical units is used when available. Legacy milliwatts are converted to microwatts; unknown/abstract scales use a cubic relative-power proxy whose values are not calibrated watts. A discovered hwmon power channel is logged as reported by that device, not automatically as whole-machine power. |
-| Lertick | Optional. New independent installations and hardware trials use the BPF-free build. `./deploy.sh install --lertick` selects the full build and persistent coordination, requiring usable Linux userspace BPF headers and the separate [Lertick kernel/toolchain requirements](https://github.com/Denny-Lin/lertick). See the [shared integration guide](INTEGRATION.md). |
+| Lertick | Optional. Ordinary installs build automatic peer discovery with Linux userspace BPF headers. Missing peers leave local control independent. Lertick itself has the separate [Lertick kernel/toolchain requirements](https://github.com/Denny-Lin/lertick). See the [shared integration guide](INTEGRATION.md). |
 
 Deployment environments actually tested on **2026-11-01 (America/Los_Angeles)**:
 
@@ -56,7 +56,7 @@ lerwatt status
 lerwatt logs
 ```
 
-Run these commands as your normal user. The helper builds `build/lerwattd-standalone` locally and requests sudo only for hardware checks/control or system installation. If already root, build first with `make hardware`. No model download or offline training is needed.
+Run these commands as your normal user. Persistent installation builds `build/lerwattd` with automatic discovery; foreground trials use the BPF-free binary. The helper builds locally and requests sudo only for hardware checks/control or system installation. If already root, build first with `make hardware`. No model download or offline training is needed.
 
 | Command | Action |
 | --- | --- |
@@ -140,7 +140,7 @@ The thermal model needs at least about 90 seconds of suitable observations; a ho
 
 Joint planning requires trained models, valid temperature inputs, nonzero power estimates and at most 65,536 frequency combinations. Otherwise independent control continues. Its power inputs can come from the Energy Model or the relative proxy; proxy-based planning does not establish a physical-watt optimum.
 
-Telemetry separates `pred_c` (planning prediction) from `forecast_c` (expected temperature five seconds ahead). In `nominal` mode, the point forecast does not influence ceilings. Cooperative mode can tighten five-second MPC decisions within its supported action domain, while preserving the original raw guard and thermal limits. It is explicit opt-in for standalone installs and the default when `install --lertick` is explicitly selected. Enabled does not mean every correction is applied: unsupported or unreliable corrections retain nominal MPC predictions. [Cooperative prediction and telemetry](COOPERATIVE_PREDICTION.md). `model` and `joint` indicate thermal-model readiness and joint-planner activation; `-1` indicates an unavailable temperature prediction. See [forecast telemetry and fallback](../results/point-model-observations/README.md#runtime-and-telemetry).
+Telemetry separates `pred_c` (planning prediction) from `forecast_c` (expected temperature five seconds ahead). In `nominal` mode, the point forecast does not influence ceilings. Cooperative mode can tighten five-second MPC decisions within its supported action domain, while preserving the original raw guard and thermal limits. Prediction selection is independent of automatic peer discovery; use `--prediction cooperative` to select it explicitly. Enabled does not mean every correction is applied: unsupported or unreliable corrections retain nominal MPC predictions. [Cooperative prediction and telemetry](COOPERATIVE_PREDICTION.md). `model` and `joint` indicate thermal-model readiness and joint-planner activation; `-1` indicates an unavailable temperature prediction. See [forecast telemetry and fallback](../results/point-model-observations/README.md#runtime-and-telemetry).
 
 `--telemetry FILE` creates a **new** file with mode `0600`; existing files, symlinks, hardlinks, FIFOs and devices are rejected instead of appended to. Choose a fresh filename for each run. `--telemetry -` writes to stdout, so ordinary shell redirection can create a user-owned log. Use an output directory you trust; log size is not rotated or capped automatically.
 
@@ -203,16 +203,14 @@ For persistent native use, run this from the Lerwatt checkout:
 ./deploy.sh install --lertick --period-ms 100
 ```
 
-This builds the full daemon without libbpf, persists `contract=auto`, defaults
-to `prediction=cooperative` and keeps Lerwatt's watchdog/recovery. Install
-Lertick separately, then use `lertick integration on` and `lertick enable`.
-Lertick installation alone changes neither Lerwatt's prediction mode nor its
-accuracy and does not enable Lertick's service. Plain upgrades preserve modes.
-`./deploy.sh install --no-lertick` turns the Lerwatt link off and defaults back
-to nominal; `lertick integration off` changes only the scheduler's link.
-Explicit `--prediction` takes precedence in either installation mode. A saved
-rule policy or period above 100 ms must be explicitly adjusted before enabling
-cooperative prediction, or retained with `--prediction nominal`.
+Ordinary `./deploy.sh install` already builds the full daemon without libbpf
+and saves `contract=auto`; `--lertick` is a legacy alias, not a required step.
+Install and enable Lertick normally. New Lertick installations automatically
+publish compatible advice without `integration on`. Each controller keeps its
+own AI, model selection and recovery. Peer presence does not switch Lerwatt's
+nominal/cooperative prediction mode. Existing saved opt-outs remain respected;
+see the shared guide for legacy configuration. Installing a scheduler does not
+itself enable scheduling or improve forecast accuracy.
 
 Either controller may start first. ABI 2 checks policy topology, attachment identity and freshness; unavailable or incompatible peers leave independent operation. Models remain private and compatible model changes do not require joint retraining. The [shared integration guide](INTEGRATION.md) covers installation, status, independent upgrades and exact protocol rules.
 

@@ -32,8 +32,8 @@ averages or confidence intervals.
 unmeasured.** The original `nominal` prediction path keeps point forecasts separate from CPU
 limits. An experimental cooperative predictor can tighten five-second MPC
 decisions within a validated action context. Standalone installs keep nominal
-MPC by default; explicitly selecting `install --lertick` defaults to cooperative
-prediction. Enabled does not mean every correction is applied, nor that Lertick
+MPC by default; cooperative prediction is selected independently with
+`--prediction cooperative`. Compatible running peers are discovered automatically. Enabled does not mean every correction is applied, nor that Lertick
 improves accuracy. Small finite-job regressions remain recorded. [Implementation and limits](docs/COOPERATIVE_PREDICTION.md). A separate 192-run simulator-module study reduced mean forecast MAE by
 28.95–29.51%, with a small worst-profile regression; it uses a different dataset.
 [Module results →](results/point-model-observations/README.md)
@@ -141,7 +141,7 @@ Linux continues handling frequency transitions, idle-state selection and thermal
 
 ## Works with Lertick
 
-Let [Lertick](https://github.com/Denny-Lin/lertick) handle task scheduling while Lerwatt manages CPU power constraints. Enable their optional local link with `./deploy.sh install --lertick`; each keeps its own model, updates and recovery. Model improvements that keep the protocol compatible do not require updating or retraining the peer. Either project can run alone. **[Connect them in a few steps →](docs/INTEGRATION.md)**
+Let [Lertick](https://github.com/Denny-Lin/lertick) handle task scheduling while Lerwatt manages CPU power constraints. Ordinary installations automatically discover their compatible local link; each keeps its own model, updates and recovery. Model improvements that keep the protocol compatible do not require updating or retraining the peer. Either project can run alone. **[Connect them in a few steps →](docs/INTEGRATION.md)**
 
 ## Tested Ubuntu versions
 
