@@ -1,0 +1,81 @@
+{
+  "frozen_before_new_32_profile_scores": true,
+  "prior_8_profiles_now_development": true,
+  "candidate": "bounded delayed temperature-residual LMS with variability guard",
+  "model_source_files": {
+    "src/temporal.c": "d889f6bd10c1436e8075c827a9a98a5a6b9110e040b12fa90ebe16e7cb545d33",
+    "include/lerwatt/temporal.h": "e8f4f47e4c639604672e62e38be616cf6871d2c1406cdbcca9559f4cbe9c4c27",
+    "tests/test_control_forecast.c": "36f40a143d30ef36b97ba17f6a38188bf7573725e09996d2860f2dc56ed2f8b0",
+    "src/controller.c": "744070ae1247f3c024a86557b6e008baa651f82f52341bf9767eb55b0c6d0654",
+    "src/forecast.c": "21265a764056780555e32f03de4f4d2db0a82ed16557ec5e855b1ef7405c815e",
+    "src/learn.c": "8a5fbfc6c93f48f3e40a7abf1b2259c3b1070cdf58bc3a14079fce6402162d64"
+  },
+  "replicates": [
+    0,
+    1,
+    2,
+    3,
+    4,
+    5
+  ],
+  "acceptance": {
+    "macro_mae_reduction_each_replicate_at_least_percent": 3,
+    "macro_rmse_reduction_each_replicate_at_least_percent": 3,
+    "maximum_profile_mean_mae_regression_percent": 2,
+    "maximum_profile_mean_rmse_regression_percent": 2,
+    "control_trajectories": "unchanged",
+    "runtime": "actual Linux daemon path and restore checks required"
+  },
+  "notes": [
+    "Macro means weight profiles equally; no hardware confidence interval.",
+    "The first AR/hard selector regressed on five of eight early profiles; they are development after that score, not untouched confirmation.",
+    "A blended AR gate and residual learner without the variability guard also regressed; all development outputs retained.",
+    "Final variability guard uses the existing 30s loss memory divided by the 5s horizon as six effective blocks; heuristic only, not a statistical coverage claim.",
+    "No retuning after the new 32-profile confirmation matrix is scored."
+  ],
+  "post_freeze_implementation_notes": [
+    "Added a stale-feedback age check after confirmation: labels older than horizon+250ms cannot activate a correction. This is a missing-data safety fix; no perfectly sampled benchmark output changed.",
+    "Integrated the exact frozen learner into controller point forecasting; the 32-profile output is byte-identical to the external candidate.",
+    "Control decisions remain byte-identical to published independent/joint closed-loop results.",
+    "Added three-decimal raw-sensor and point-forecast telemetry for runtime scoring.",
+    "Added nanosecond timestamps and audited startup-inclusive sensor peaks at every 10ms simulator tick; all 192 forecast metrics remained identical."
+  ],
+  "production_temporal_sha256": "5a73c46bb8c16857ecaaa1c8725ed54bd3a2033f86ff5bb3d1982e77632d3f64",
+  "runtime_acceptance_before_run": {
+    "cases": [
+      "period142-passive-30C",
+      "sine11-fan-15C",
+      "phase-reset66-passive-30C",
+      "random7-bare-20C",
+      "steps-bare-15C",
+      "sparse31-fan-35C"
+    ],
+    "duration_each_s": 1200,
+    "warmup_s": 300,
+    "macro_mae_and_rmse_reduction_at_least_percent": 3,
+    "maximum_case_mae_or_rmse_regression_percent": 2,
+    "restoration": "all original knobs, no journal left",
+    "simulation": "no critical trip, throttle steps or invalid writes",
+    "scope": "actual daemon/file ABI on one simulated board; no hardware or throughput claim"
+  },
+  "runtime_outcome": {
+    "complete_cases": 6,
+    "passed_frozen_accuracy_gate": true,
+    "macro": {
+      "mae_c": {
+        "baseline": 1.4738494309531225,
+        "candidate": 0.6709853171106764,
+        "change_percent": -54.4739575821692
+      },
+      "rmse_c": {
+        "baseline": 1.8193860609506052,
+        "candidate": 0.9480235789686673,
+        "change_percent": -47.89321522704546
+      }
+    },
+    "source_manifest": "runtime/cases/environment.json",
+    "failures_preserved": "runtime/retained-failures",
+    "raw_archive_manifest": "runtime/archives.json",
+    "predictor_parameters_changed_after_confirmation": false
+  }
+}

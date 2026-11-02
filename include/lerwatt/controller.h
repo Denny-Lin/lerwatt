@@ -30,6 +30,7 @@
 #include "lerwatt/hal.h"
 #include "lerwatt/learn.h"
 #include "lerwatt/forecast.h"
+#include "lerwatt/temporal.h"
 
 enum lw_ctl_policy {
 	LW_POLICY_RULE = 0,	/* PI power budget with hysteresis (default) */
@@ -52,6 +53,7 @@ struct lw_ctl_params {
 	double lat_crit_threshold;	/* 0..1 */
 	enum lw_ctl_policy policy;
 	bool cross_cluster;		/* opt-in bounded joint search; MPC only */
+	bool temporal_forecast;		/* point forecast only; never changes planning */
 	double mpc_horizon_s;		/* look-ahead of the predictive ceiling */
 	double mpc_over_soft_c;		/* line the plan holds, above the soft limit */
 	double mpc_margin_c;		/* a climb must predict this far under the limit */
@@ -101,6 +103,7 @@ struct lw_ctl_state {
 	double mpc_peak_c;		/* recent peak of the filtered zone temperature */
 	uint64_t last_group_ns;
 	struct lw_forecaster forecaster;
+	struct lw_temporal temporal;
 };
 
 struct lw_ctl_out {
@@ -117,6 +120,9 @@ struct lw_ctl_out {
 	bool joint_active;
 	double predicted_c;		/* model's temperature at the horizon, NAN if none */
 	double forecast_c;		/* expected 5 s point forecast; not a safety bound */
+	double forecast_base_c;		/* unchanged delayed-feedback reference */
+	double forecast_correction_c;	/* temporal residual; base weights still describe reference */
+	uint64_t temporal_labels, temporal_dropped;
 	int forecast_source;		/* lw_forecast_expert, -1 when unavailable */
 	uint64_t forecast_labels;
 	uint64_t forecast_dropped;

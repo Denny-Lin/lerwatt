@@ -1,0 +1,129 @@
+{
+  "cases": [
+    "period142-passive-30C",
+    "sine11-fan-15C",
+    "phase-reset66-passive-30C",
+    "random7-bare-20C",
+    "steps-bare-15C",
+    "sparse31-fan-35C"
+  ],
+  "smoke_only": false,
+  "duration_s": 1200,
+  "warmup_s": 300,
+  "binary_sha256": {
+    "/home/ubuntu/lerwatt-temporal-forecast/build/lerwattd": "00bbd2b6161ae9070e6bd4bfb2362df257370cd6f4e70c232e44dbb0b4727ad9",
+    "/home/ubuntu/lerwatt-temporal-forecast/build/lerwatt-sim": "ddb14f5de44f961d2a4dca46d961581c9e01448bdbf29eef3c85896a61d8b9a8"
+  },
+  "case_sources": {
+    "period142-passive-30C": {
+      "collection": "lerwatt-temporal-runtime-081baec",
+      "environment_sha256": "323f957b7d0a486585faa9550c0f77bffe86aadf64d1dcd447cf3046d919d0bd",
+      "telemetry_sha256": "ae1366fd851a381ae0648e17a1a012944f215630540699e0e7a5e8122f0c3067",
+      "truth_sha256": "f658fd3a59e28ab99ec1223bad0b21d007d47f6673f266442dea683d66e9ba2d"
+    },
+    "sine11-fan-15C": {
+      "collection": "lerwatt-temporal-runtime-081baec",
+      "environment_sha256": "323f957b7d0a486585faa9550c0f77bffe86aadf64d1dcd447cf3046d919d0bd",
+      "telemetry_sha256": "2bbf6042a6e37fbb7562190d262fa49a49ccdc8a1ad35f89733c3a60a09b0344",
+      "truth_sha256": "c01684ae269c4c08203be2befa83627ff4642f3e5ccb98583865ae386c70ca00"
+    },
+    "phase-reset66-passive-30C": {
+      "collection": "lerwatt-temporal-runtime-081baec",
+      "environment_sha256": "323f957b7d0a486585faa9550c0f77bffe86aadf64d1dcd447cf3046d919d0bd",
+      "telemetry_sha256": "cf67ade03dff64dde1b30e0e8c3c060f6aab8fccc92f7e6f268b3eeba5f0daf5",
+      "truth_sha256": "5b3a41584895e1c3a588f33d6c11b09fd8355e50588729f463a48756210b7e5d"
+    },
+    "random7-bare-20C": {
+      "collection": "lerwatt-temporal-runtime-ec5a696",
+      "environment_sha256": "febdc444120768c08423489946d49c8131b70cfbf5ce0600df77f3d0668c9eb4",
+      "telemetry_sha256": "29d3550ba5560ca5f745e2f4c8e14454f4549336b7579d1c7d69154d015321e1",
+      "truth_sha256": "b3dda6e903aa2369654bf17610d8915c0534677e055d5ae4be8a462132b75c9f"
+    },
+    "steps-bare-15C": {
+      "collection": "lerwatt-temporal-runtime-ec5a696",
+      "environment_sha256": "febdc444120768c08423489946d49c8131b70cfbf5ce0600df77f3d0668c9eb4",
+      "telemetry_sha256": "6b2554bef607591d968eea02dcd070d193932ca52bc7a99046087f1c587dc0c7",
+      "truth_sha256": "938c67e150ebca542e05cadf6b9aeb5e876cf1e0e6138d353769b8eeecee667b"
+    },
+    "sparse31-fan-35C": {
+      "collection": "lerwatt-temporal-runtime-ec5a696",
+      "environment_sha256": "febdc444120768c08423489946d49c8131b70cfbf5ce0600df77f3d0668c9eb4",
+      "telemetry_sha256": "55d9c4c2c301fc75f73edbf6ae6b163c33773e442ab78fb1c3e0460794273ade",
+      "truth_sha256": "10f9505fcdf7da0aeced8923dd13b0d1bfb3ff9586a48f909b489a21abb80274"
+    }
+  },
+  "all_collection_environments": {
+    "lerwatt-temporal-runtime-fe05326": {
+      "kernel": "7.0.0-38-generic",
+      "architecture": "aarch64",
+      "duration_s": 1200,
+      "warmup_s": 300,
+      "cases": [
+        "period142-passive-30C",
+        "sine11-fan-15C",
+        "phase-reset66-passive-30C",
+        "random7-bare-20C",
+        "steps-bare-15C",
+        "sparse31-fan-35C"
+      ],
+      "smoke_only": false,
+      "sha256": {
+        "/home/ubuntu/lerwatt-temporal-forecast/build/lerwattd": "00bbd2b6161ae9070e6bd4bfb2362df257370cd6f4e70c232e44dbb0b4727ad9",
+        "/home/ubuntu/lerwatt-temporal-forecast/build/lerwatt-sim": "ddb14f5de44f961d2a4dca46d961581c9e01448bdbf29eef3c85896a61d8b9a8",
+        "/home/ubuntu/lerwatt-temporal-forecast/tests/verify_runtime_forecast.py": "c8ed9521db815eed8d498c59154cdea3b691cae48f90268fb5e4b3981c477e25"
+      }
+    },
+    "lerwatt-temporal-runtime-081baec": {
+      "kernel": "7.0.0-38-generic",
+      "architecture": "aarch64",
+      "duration_s": 1200,
+      "warmup_s": 300,
+      "cases": [
+        "period142-passive-30C",
+        "sine11-fan-15C",
+        "phase-reset66-passive-30C",
+        "random7-bare-20C",
+        "steps-bare-15C",
+        "sparse31-fan-35C"
+      ],
+      "smoke_only": false,
+      "sha256": {
+        "/home/ubuntu/lerwatt-temporal-forecast/build/lerwattd": "00bbd2b6161ae9070e6bd4bfb2362df257370cd6f4e70c232e44dbb0b4727ad9",
+        "/home/ubuntu/lerwatt-temporal-forecast/build/lerwatt-sim": "ddb14f5de44f961d2a4dca46d961581c9e01448bdbf29eef3c85896a61d8b9a8",
+        "/home/ubuntu/lerwatt-temporal-forecast/tests/verify_runtime_forecast.py": "b7ecc78ffcc13bb207611cf3779e957109ae4d7fa2980638be65e259ef3972d6"
+      }
+    },
+    "lerwatt-temporal-runtime-ec5a696": {
+      "kernel": "7.0.0-38-generic",
+      "architecture": "aarch64",
+      "duration_s": 1200,
+      "warmup_s": 300,
+      "cases": [
+        "random7-bare-20C",
+        "steps-bare-15C",
+        "sparse31-fan-35C"
+      ],
+      "smoke_only": false,
+      "sha256": {
+        "/home/ubuntu/lerwatt-temporal-forecast/build/lerwattd": "00bbd2b6161ae9070e6bd4bfb2362df257370cd6f4e70c232e44dbb0b4727ad9",
+        "/home/ubuntu/lerwatt-temporal-forecast/build/lerwatt-sim": "ddb14f5de44f961d2a4dca46d961581c9e01448bdbf29eef3c85896a61d8b9a8",
+        "/home/ubuntu/lerwatt-temporal-forecast/tests/verify_runtime_forecast.py": "1d1ea8bee95ebf64ee43d3c014ab5f3be32c3912a97fbaf7a8d17f5277eff9c3"
+      }
+    },
+    "lerwatt-temporal-helper-ec5a696-smoke": {
+      "kernel": "7.0.0-38-generic",
+      "architecture": "aarch64",
+      "duration_s": 12.0,
+      "warmup_s": 0.0,
+      "cases": [
+        "random7-bare-20C"
+      ],
+      "smoke_only": true,
+      "sha256": {
+        "/home/ubuntu/lerwatt-temporal-forecast/build/lerwattd": "00bbd2b6161ae9070e6bd4bfb2362df257370cd6f4e70c232e44dbb0b4727ad9",
+        "/home/ubuntu/lerwatt-temporal-forecast/build/lerwatt-sim": "ddb14f5de44f961d2a4dca46d961581c9e01448bdbf29eef3c85896a61d8b9a8",
+        "/home/ubuntu/lerwatt-temporal-forecast/tests/verify_runtime_forecast.py": "1d1ea8bee95ebf64ee43d3c014ab5f3be32c3912a97fbaf7a8d17f5277eff9c3"
+      }
+    }
+  }
+}

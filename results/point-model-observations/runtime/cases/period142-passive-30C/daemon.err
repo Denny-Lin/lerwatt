@@ -1,0 +1,7 @@
+lerwatt: mode=simulation sysroot=/var/tmp/lerwatt-temporal-runtime-081baec/period142-passive-30C/root platform=rk3588
+lerwatt:   cluster 0 = policy0 cpus 0-3 cap 397, 5 OPPs 1008000-1800000 kHz, EM yes, zone littlecore-thermal, 2 idle states
+lerwatt:   cluster 1 = policy4 cpus 4-5 cap 1024, 7 OPPs 1200000-2400000 kHz, EM yes, zone bigcore0-thermal, 2 idle states
+lerwatt:   cluster 2 = policy6 cpus 6-7 cap 1024, 7 OPPs 1200000-2400000 kHz, EM yes, zone bigcore2-thermal, 2 idle states
+lerwatt:   7 thermal zones, package package-thermal, meter ina226
+lerwatt: soft limit 80.0 degC, period 100 ms
+lerwatt: stopped after 1200.0 s, 0 writes, 0 write errors

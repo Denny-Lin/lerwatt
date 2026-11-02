@@ -1,0 +1,6 @@
+{
+  "reason": "runtime audit omitted pm_qos_resume_latency_us from original knob snapshot; restart with corrected measurement only, preserve data",
+  "runner_pid": 91339,
+  "unix_time": 1793578160.2024775,
+  "model_changed": false
+}

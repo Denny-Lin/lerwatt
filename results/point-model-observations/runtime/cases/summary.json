@@ -1,0 +1,155 @@
+{
+  "complete_cases": 6,
+  "macro": {
+    "mae_c": {
+      "baseline": 1.4738494309531225,
+      "candidate": 0.6709853171106764,
+      "change_percent": -54.4739575821692
+    },
+    "rmse_c": {
+      "baseline": 1.8193860609506052,
+      "candidate": 0.9480235789686673,
+      "change_percent": -47.89321522704546
+    }
+  },
+  "cases": [
+    {
+      "case": "period142-passive-30C",
+      "samples": 26850,
+      "metrics": {
+        "baseline": {
+          "n": 26850,
+          "mae_c": 3.5308732588454372,
+          "rmse_c": 4.049557812911395
+        },
+        "candidate": {
+          "n": 26850,
+          "mae_c": 0.7386461452513966,
+          "rmse_c": 0.950008006689772
+        }
+      },
+      "late_labels": 0,
+      "temporal_active_points": 26850,
+      "all_knobs_restored": true,
+      "journal_removed": true,
+      "mae_c_change_percent": -79.08035516706914,
+      "rmse_c_change_percent": -76.5404508200669
+    },
+    {
+      "case": "sine11-fan-15C",
+      "samples": 26826,
+      "metrics": {
+        "baseline": {
+          "n": 26826,
+          "mae_c": 1.5814626481771414,
+          "rmse_c": 1.833127906077549
+        },
+        "candidate": {
+          "n": 26826,
+          "mae_c": 0.5776251397897563,
+          "rmse_c": 0.7226390167899819
+        }
+      },
+      "late_labels": 9,
+      "temporal_active_points": 26797,
+      "all_knobs_restored": true,
+      "journal_removed": true,
+      "mae_c_change_percent": -63.475258776705815,
+      "rmse_c_change_percent": -60.57890917517835
+    },
+    {
+      "case": "phase-reset66-passive-30C",
+      "samples": 26853,
+      "metrics": {
+        "baseline": {
+          "n": 26853,
+          "mae_c": 1.6366105090678882,
+          "rmse_c": 1.8972904340399996
+        },
+        "candidate": {
+          "n": 26853,
+          "mae_c": 0.6166710237217442,
+          "rmse_c": 0.8805722452627605
+        }
+      },
+      "late_labels": 0,
+      "temporal_active_points": 25433,
+      "all_knobs_restored": true,
+      "journal_removed": true,
+      "mae_c_change_percent": -62.32023317063009,
+      "rmse_c_change_percent": -53.587904652651844
+    },
+    {
+      "case": "random7-bare-20C",
+      "samples": 26850,
+      "metrics": {
+        "baseline": {
+          "n": 26850,
+          "mae_c": 1.00880208566108,
+          "rmse_c": 1.4808875502923236
+        },
+        "candidate": {
+          "n": 26850,
+          "mae_c": 1.00880208566108,
+          "rmse_c": 1.4808875502923236
+        }
+      },
+      "late_labels": 0,
+      "temporal_active_points": 0,
+      "all_knobs_restored": true,
+      "journal_removed": true,
+      "mae_c_change_percent": 0.0,
+      "rmse_c_change_percent": 0.0
+    },
+    {
+      "case": "steps-bare-15C",
+      "samples": 26853,
+      "metrics": {
+        "baseline": {
+          "n": 26853,
+          "mae_c": 0.47931516031728294,
+          "rmse_c": 0.6450989087096617
+        },
+        "candidate": {
+          "n": 26853,
+          "mae_c": 0.47813458459017616,
+          "rmse_c": 0.6436809011044634
+        }
+      },
+      "late_labels": 0,
+      "temporal_active_points": 453,
+      "all_knobs_restored": true,
+      "journal_removed": true,
+      "mae_c_change_percent": -0.2463046915364253,
+      "rmse_c_change_percent": -0.21981243279958207
+    },
+    {
+      "case": "sparse31-fan-35C",
+      "samples": 26850,
+      "metrics": {
+        "baseline": {
+          "n": 26850,
+          "mae_c": 0.6060329236499055,
+          "rmse_c": 1.010353753672702
+        },
+        "candidate": {
+          "n": 26850,
+          "mae_c": 0.6060329236499055,
+          "rmse_c": 1.010353753672702
+        }
+      },
+      "late_labels": 0,
+      "temporal_active_points": 0,
+      "all_knobs_restored": true,
+      "journal_removed": true,
+      "mae_c_change_percent": 0.0,
+      "rmse_c_change_percent": 0.0
+    }
+  ],
+  "passed_frozen_accuracy_gate": true,
+  "limits": [
+    "One simulated board through the real daemon/file ABI; no hardware accuracy claim.",
+    "Macro errors weight the six profiles equally; correlated forecasts are not independent trials.",
+    "Three-percent macro improvement and two-percent maximum case regression were declared before collection."
+  ]
+}

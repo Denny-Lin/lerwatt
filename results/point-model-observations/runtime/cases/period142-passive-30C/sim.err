@@ -1,0 +1,2 @@
+lerwatt-sim: rk3588 at /var/tmp/lerwatt-temporal-runtime-081baec/period142-passive-30C/root, cooling passive, ambient 30.0 C, load trace:/var/tmp/lerwatt-temporal-runtime-081baec/period142-passive-30C/load.txt, tick 10 ms
+lerwatt-sim: 1198.7 s simulated in 1200.3 s: energy 8214.3 J (mean 6.85 W), work served 70.3%, 0 throttle steps, peak 65.6 / 65.6 / 62.8 C (big0 / big1 / little), 0 bad writes

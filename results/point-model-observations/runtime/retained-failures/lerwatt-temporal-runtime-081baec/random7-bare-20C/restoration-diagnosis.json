@@ -1,0 +1,29 @@
+{
+  "audited_unix": 1793583187.4315193,
+  "original_run_unchanged": true,
+  "original_exact_text_audit_failed": true,
+  "actuator_count": 30,
+  "integer_values_all_restored": true,
+  "text_differences": [
+    {
+      "path": "sys/devices/system/cpu/cpufreq/policy4/scaling_max_freq",
+      "before": "2400000\n",
+      "after": "2400000",
+      "same_integer": true
+    },
+    {
+      "path": "sys/devices/system/cpu/cpufreq/policy6/scaling_max_freq",
+      "before": "2400000\n",
+      "after": "2400000",
+      "same_integer": true
+    },
+    {
+      "path": "sys/devices/system/cpu/cpufreq/policy0/scaling_max_freq",
+      "before": "1800000\n",
+      "after": "1800000",
+      "same_integer": true
+    }
+  ],
+  "journal_removed": true,
+  "disposition": "Retained failed collector run; all three differences are trailing newlines only. Repeat full random case with corrected integer-valued audit, unchanged model/binaries; do not count this as a completed confirmation."
+}

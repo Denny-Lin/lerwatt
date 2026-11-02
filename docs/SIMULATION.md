@@ -261,9 +261,9 @@ hot-spot RMSE are included in the raw JSONL. **A general prediction-accuracy
 advantage is unproven.** Future model changes can be compared against these
 recorded baselines without confusing lower forecast error with higher throughput.
 
-### Delayed-feedback point forecasts
+### Delayed-feedback reference forecasts
 
-The current `forecast_c` uses an online, bounded blend of persistence,
+The reference `forecast_base_c` uses an online, bounded blend of persistence,
 constant-power and causal-load model forecasts. It learns from stored
 five-second predictions only after the corresponding sensor labels arrive;
 a delayed squared-error comparison can retain a simpler expert instead.
@@ -287,6 +287,41 @@ eight reserved profiles. Full tables, all replicates, rejected designs and
 runtime checks are in [the forecast report](../results/forecast-feedback/README.md).
 The independent and joint closed-loop control outputs remain byte-identical
 to the earlier control evidence; the rule remains the default.
+
+### Temperature-history correction
+
+With MPC, `forecast_c` can add a bounded correction learned from recent raw
+temperature changes and the reference model forecasts. It trains only after
+the five-second labels arrive. A paired-error variability guard retains the
+reference when the improvement is small or inconsistent; this guard is a
+heuristic, not a confidence interval. `--forecast adaptive` selects the
+uncorrected reference. Planning, safety limits and the default rule policy
+are unchanged.
+
+On 32 new, fixed confirmation profiles, six predeclared simulator seeds reduce
+equal-profile mean MAE by 28.95% to 29.51%, and mean RMSE by 23.87% to 24.45%.
+Gains concentrate on recurring loads. The worst profile mean regresses by
+0.13% MAE and 0.23% RMSE; random and several slow/sparse cases keep the reference.
+All 192 controller runs have zero throttling and at most an 83.2 C sensor peak,
+including startup. These are controller-module simulations, not hardware
+accuracy measurements, and cannot be combined arithmetically with the earlier
+19.85% result from a different dataset.
+
+The [full report](../results/point-model-observations/README.md) preserves the
+rejected models, all scores, source freeze and telemetry semantics.
+`forecast_weights` describes the reference; `forecast_correction_c` is the
+additional residual, and `forecast_source: temporal` marks its selection.
+
+Six sequential 20-minute runs through the real daemon and simulated file ABI
+pass the predeclared runtime gate: equal-profile mean MAE 1.473849 to
+0.670985 C (-54.47%) and RMSE 1.819386 to 0.948024 C (-47.89%), with no
+case regression. Random and sparse loads keep the reference exactly; steps
+are nearly unchanged. All 30 actuator values are restored in every case,
+with zero throttling or invalid writes. These previously evaluated input
+families confirm integration and live timing, not unseen-family or hardware
+accuracy. The [runtime report](../results/point-model-observations/runtime/README.md)
+preserves both interrupted/failed collector attempts, the corrected
+integer-valued restoration check, full case records and raw-data hashes.
 
 ## 5. Calibration, when the board arrives
 

@@ -1,0 +1,11 @@
+{
+  "development_macro_current_mae_c": 0.6308256666666666,
+  "development_macro_candidate_mae_c": 0.6316229999999999,
+  "decision": "Independent raw-temperature thermal model does not consistently improve the deployed predictor; do not implement it in production. Reserved profiles have not been scored.",
+  "files_sha256": {
+    "tests/test_control_forecast.c": "e6d09bc29835444c50db2de8d261f40e2f8b046cc6bbe6e9fb74f9810ddd80ab",
+    "src/controller.c": "744070ae1247f3c024a86557b6e008baa651f82f52341bf9767eb55b0c6d0654",
+    "src/forecast.c": "21265a764056780555e32f03de4f4d2db0a82ed16557ec5e855b1ef7405c815e",
+    "src/learn.c": "8a5fbfc6c93f48f3e40a7abf1b2259c3b1070cdf58bc3a14079fce6402162d64"
+  }
+}
