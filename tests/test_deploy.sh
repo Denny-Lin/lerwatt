@@ -493,6 +493,19 @@ reset_log
 FAKE_UID=0 PREFIX="$service_prefix" "$service_prefix/bin/lerwatt" service-restore > "$tmp/output" 2>&1
 has 'MODE restore'
 
+# Prediction mode is explicitly persisted, validated and retained on upgrade.
+reset_log
+expect_status 1 env PREFIX="$service_prefix" "$fixture/deploy.sh" install --prediction cooperative
+PREFIX="$service_prefix" "$fixture/deploy.sh" install --policy mpc --prediction cooperative --period-ms 100 > "$tmp/output" 2>&1
+grep -F -x 'prediction=cooperative' "$SERVICE_CONFIG" >/dev/null || die 'cooperative predictor setting missing'
+reset_log
+FAKE_UID=0 PREFIX="$service_prefix" "$service_prefix/bin/lerwatt" service-run > "$tmp/output" 2>&1
+has 'ARG --prediction'; has 'ARG cooperative'; has 'ARG --watchdog'
+PREFIX="$service_prefix" "$fixture/deploy.sh" install > "$tmp/output" 2>&1
+grep -F -x 'prediction=cooperative' "$SERVICE_CONFIG" >/dev/null || die 'upgrade lost prediction setting'
+PREFIX="$service_prefix" "$fixture/deploy.sh" install --policy rule --prediction nominal --period-ms 250 > "$tmp/output" 2>&1
+grep -F -x 'prediction=nominal' "$SERVICE_CONFIG" >/dev/null || die 'nominal predictor opt-out missing'
+
 # Optional coordination chooses a BPF-enabled build before replacing the
 # service, persists across a plain upgrade, and can be explicitly disabled.
 reset_log

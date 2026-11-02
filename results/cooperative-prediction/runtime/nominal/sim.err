@@ -1,0 +1,2 @@
+lerwatt-sim: rk3588 at /var/tmp/lerwatt-nominal-runtime-final6/steps-bare-15C/root, cooling bare, ambient 15.0 C, load trace:/var/tmp/lerwatt-nominal-runtime-final6/steps-bare-15C/load.txt, tick 10 ms
+lerwatt-sim: 180.1 s simulated in 180.1 s: energy 990.4 J (mean 5.50 W), work served 94.4%, 0 throttle steps, peak 46.2 / 46.2 / 48.1 C (big0 / big1 / little), 0 bad writes

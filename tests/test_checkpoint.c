@@ -81,15 +81,15 @@ static void make_fresh(void)
 		fresh[i].init = fresh[i].temp_init = true;
 		fresh[i].integ_w = 17; fresh[i].ceil_idx = 1; fresh[i].last_down_ns = 123;
 		fresh[i].temp_f_mc = 61234; fresh[i].temp_s_mc = 62345;
-		fresh[i].forecaster.count = 3; fresh[i].forecaster.last_issue_ns = 998;
-		fresh[i].temporal.count = 2; fresh[i].temporal.last_issue_ns = 997;
-		fresh[i].tm.have_prev = true; fresh[i].tm.have_mean = false;
-		fresh[i].tm.prev_mean_w = 77; fresh[i].tm.prev_mean_c = 44;
-		fresh[i].tm.acc_s = .1; fresh[i].tm.acc_energy_j = .2; fresh[i].tm.acc_pkg = 6;
-		fresh[i].tm.forecast_own_w = .4; fresh[i].tm.forecast_total_w = .8;
-		fresh[i].tm.last_own_w = .9; fresh[i].tm.last_total_w = 1.2;
-		fresh[i].tm.peak_offset_c = 4; fresh[i].tm.peak_power_w = 2;
-		fresh[i].tm.load_reversals = 7; fresh[i].tm.load_direction = -1;
+		fresh[i].predictor.forecaster.count = 3; fresh[i].predictor.forecaster.last_issue_ns = 998;
+		fresh[i].predictor.temporal.count = 2; fresh[i].predictor.temporal.last_issue_ns = 997;
+		fresh[i].predictor.thermal.have_prev = true; fresh[i].predictor.thermal.have_mean = false;
+		fresh[i].predictor.thermal.prev_mean_w = 77; fresh[i].predictor.thermal.prev_mean_c = 44;
+		fresh[i].predictor.thermal.acc_s = .1; fresh[i].predictor.thermal.acc_energy_j = .2; fresh[i].predictor.thermal.acc_pkg = 6;
+		fresh[i].predictor.thermal.forecast_own_w = .4; fresh[i].predictor.thermal.forecast_total_w = .8;
+		fresh[i].predictor.thermal.last_own_w = .9; fresh[i].predictor.thermal.last_total_w = 1.2;
+		fresh[i].predictor.thermal.peak_offset_c = 4; fresh[i].predictor.thermal.peak_power_w = 2;
+		fresh[i].predictor.thermal.load_reversals = 7; fresh[i].predictor.thermal.load_direction = -1;
 	}
 }
 
@@ -160,14 +160,14 @@ int main(void)
 		p->opps[0] = (struct lw_opp){ .khz = 400000, .power_uw = 10000, .perf = 85 };
 		p->opps[1] = (struct lw_opp){ .khz = 4800000, .power_uw = 1000000, .perf = 1024 };
 		trained[i].init = true;
-		trained[i].tm.theta[0] = .1 + i * .01; trained[i].tm.theta[1] = -.01;
-		trained[i].tm.theta[2] = .25; trained[i].tm.lambda = .98;
-		for (int j = 0; j < LW_TM_N; j++) trained[i].tm.cov[j][j] = .5 + j;
-		trained[i].tm.samples = 32; trained[i].tm.resid_c_per_s = .2;
-		trained[i].tm.offset_avg_c = 2; trained[i].tm.power_avg_w = 1; trained[i].tm.hot_s = 300;
-		trained[i].tm.have_prev = trained[i].tm.have_mean = true;
-		trained[i].tm.acc_s = 7; trained[i].tm.peak_offset_c = 100;
-		trained[i].tm.peak_power_w = 200; trained[i].tm.load_reversals = 500;
+		trained[i].predictor.thermal.theta[0] = .1 + i * .01; trained[i].predictor.thermal.theta[1] = -.01;
+		trained[i].predictor.thermal.theta[2] = .25; trained[i].predictor.thermal.lambda = .98;
+		for (int j = 0; j < LW_TM_N; j++) trained[i].predictor.thermal.cov[j][j] = .5 + j;
+		trained[i].predictor.thermal.samples = 32; trained[i].predictor.thermal.resid_c_per_s = .2;
+		trained[i].predictor.thermal.offset_avg_c = 2; trained[i].predictor.thermal.power_avg_w = 1; trained[i].predictor.thermal.hot_s = 300;
+		trained[i].predictor.thermal.have_prev = trained[i].predictor.thermal.have_mean = true;
+		trained[i].predictor.thermal.acc_s = 7; trained[i].predictor.thermal.peak_offset_c = 100;
+		trained[i].predictor.thermal.peak_power_w = 200; trained[i].predictor.thermal.load_reversals = 500;
 	}
 	assert(lw_checkpoint_load(filename, &sys, &params, fresh) == -ENOENT);
 	assert(!lw_checkpoint_save(filename, &sys, &params, trained));
@@ -177,25 +177,33 @@ int main(void)
 	make_fresh(); memcpy(before, fresh, sizeof(fresh));
 	assert(!lw_checkpoint_load(filename, &sys, &params, fresh));
 	for (int i = 0; i < 2; i++) {
-		assert(fresh[i].tm.theta[0] == trained[i].tm.theta[0]);
-		assert(fresh[i].tm.cov[2][2] == trained[i].tm.cov[2][2]);
-		assert(fresh[i].tm.samples == 32 && fresh[i].tm.hot_s == 300);
+		assert(fresh[i].predictor.thermal.theta[0] == trained[i].predictor.thermal.theta[0]);
+		assert(fresh[i].predictor.thermal.cov[2][2] == trained[i].predictor.thermal.cov[2][2]);
+		assert(fresh[i].predictor.thermal.samples == 32 && fresh[i].predictor.thermal.hot_s == 300);
 		assert(fresh[i].integ_w == before[i].integ_w && fresh[i].ceil_idx == before[i].ceil_idx);
-		assert(!memcmp(&fresh[i].forecaster, &before[i].forecaster, sizeof(fresh[i].forecaster)));
-		assert(!memcmp(&fresh[i].temporal, &before[i].temporal, sizeof(fresh[i].temporal)));
+		assert(!memcmp(&fresh[i].predictor.forecaster, &before[i].predictor.forecaster, sizeof(fresh[i].predictor.forecaster)));
+		assert(!memcmp(&fresh[i].predictor.temporal, &before[i].predictor.temporal, sizeof(fresh[i].predictor.temporal)));
 		/* Compare all thermal transients by replacing only learned values. */
-		memcpy(before[i].tm.theta, fresh[i].tm.theta, sizeof(fresh[i].tm.theta));
-		memcpy(before[i].tm.cov, fresh[i].tm.cov, sizeof(fresh[i].tm.cov));
-		before[i].tm.lambda = fresh[i].tm.lambda; before[i].tm.samples = fresh[i].tm.samples;
-		before[i].tm.resid_c_per_s = fresh[i].tm.resid_c_per_s;
-		before[i].tm.offset_avg_c = fresh[i].tm.offset_avg_c;
-		before[i].tm.power_avg_w = fresh[i].tm.power_avg_w; before[i].tm.hot_s = fresh[i].tm.hot_s;
+		memcpy(before[i].predictor.thermal.theta, fresh[i].predictor.thermal.theta, sizeof(fresh[i].predictor.thermal.theta));
+		memcpy(before[i].predictor.thermal.cov, fresh[i].predictor.thermal.cov, sizeof(fresh[i].predictor.thermal.cov));
+		before[i].predictor.thermal.lambda = fresh[i].predictor.thermal.lambda; before[i].predictor.thermal.samples = fresh[i].predictor.thermal.samples;
+		before[i].predictor.thermal.resid_c_per_s = fresh[i].predictor.thermal.resid_c_per_s;
+		before[i].predictor.thermal.offset_avg_c = fresh[i].predictor.thermal.offset_avg_c;
+		before[i].predictor.thermal.power_avg_w = fresh[i].predictor.thermal.power_avg_w; before[i].predictor.thermal.hot_s = fresh[i].predictor.thermal.hot_s;
 	}
 	assert(!memcmp(before, fresh, sizeof(fresh)));
 	/* Refuse load before initialization, with no partial policy mutation. */
 	make_fresh(); fresh[1].init = false; memcpy(before, fresh, sizeof(fresh));
 	assert(lw_checkpoint_load(filename, &sys, &params, fresh) == -EAGAIN);
 	assert(!memcmp(before, fresh, sizeof(fresh)));
+	params.cooperative_prediction = true; unchanged_on_failure(); params.cooperative_prediction = false;
+	const struct lw_prediction_ops private_backend = { 0 };
+	trained[0].predictor.ops = &private_backend;
+	assert(lw_checkpoint_save(filename, &sys, &params, trained) == -ENOTSUP);
+	trained[0].predictor.ops = NULL;
+	make_fresh(); fresh[0].predictor.ops = &private_backend;
+	assert(lw_checkpoint_load(filename, &sys, &params, fresh) == -ENOTSUP);
+	fresh[0].predictor.ops = NULL;
 	sys.policies[1].opps[1].power_uw++;
 	unchanged_on_failure(); sys.policies[1].opps[1].power_uw--;
 	params.soft_limit_mc++; unchanged_on_failure(); params.soft_limit_mc--;
@@ -208,11 +216,11 @@ int main(void)
 	assert(lw_checkpoint_save(filename, &sys, &params, trained) == -EINVAL);
 	sys.policies[0].nopps = 2;
 	/* No trained state may erase a previously useful checkpoint. */
-	trained[0].tm.samples = trained[1].tm.samples = 0;
+	trained[0].predictor.thermal.samples = trained[1].predictor.thermal.samples = 0;
 	assert(!lw_checkpoint_save(filename, &sys, &params, trained));
 	assert(read_bytes(filename, damaged, sizeof(damaged)) == original_length);
 	assert(!memcmp(original, damaged, original_length));
-	trained[0].tm.samples = trained[1].tm.samples = 32;
+	trained[0].predictor.thermal.samples = trained[1].predictor.thermal.samples = 32;
 	for (int failure = 0; failure < 7; failure++) {
 		memcpy(damaged, original, original_length);
 		if (failure == 0) damaged[original_length - 1] ^= 1; /* checksum */

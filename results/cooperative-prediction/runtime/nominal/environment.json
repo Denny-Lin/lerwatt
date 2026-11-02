@@ -1,0 +1,13 @@
+{
+  "platform": "Linux-7.0.0-38-generic-aarch64-with-glibc2.39",
+  "uname": [
+    "Linux",
+    "lertick-vm",
+    "7.0.0-38-generic",
+    "#38~24.04.4-Ubuntu SMP PREEMPT_DYNAMIC Mon Sep 14 17:12:37 UTC 2",
+    "aarch64",
+    "aarch64"
+  ],
+  "vcpus": 8,
+  "retained_archive": true
+}

@@ -37,6 +37,16 @@ fi
 grep -q -- '--forecast temporal|adaptive' "$WORK/invalid-forecast.err" || fail "unhelpful forecast-policy error"
 pass "unknown point forecaster is rejected before touching a system"
 
+for options in '--prediction invalid' '--prediction cooperative' \
+    '--policy mpc --prediction cooperative --forecast adaptive' \
+    '--policy mpc --prediction cooperative --period-ms 1000'; do
+	read -r -a invalid_args <<< "$options"
+	if "$D" "${invalid_args[@]}" 2>"$WORK/invalid-prediction.err"; then
+		fail "invalid cooperative options were accepted: $options"
+	fi
+done
+pass "prediction mode and unsupported combinations are rejected before discovery"
+
 # Never touch a real machine from a test: if this host has cpufreq, pin the sysroot.
 SYSROOT_ARGS=()
 if ls /sys/devices/system/cpu/cpufreq/policy*/scaling_max_freq >/dev/null 2>&1; then
@@ -94,6 +104,19 @@ grep -q '"forecast_labels":0' "$WORK/joint.jsonl" || fail "forecast used feedbac
 [ "$(cat "$MAXF")" = "$ORIG" ] || fail "joint-policy fallback did not restore knobs"
 [ ! -f "$JOURNAL" ] || fail "joint-policy fallback left a journal"
 pass "joint-policy startup falls back before training and restores knobs"
+
+LERWATT_SIM_ROOT=$ROOT "$D" "${SYSROOT_ARGS[@]}" --policy mpc --prediction cooperative --duration 0.5 \
+	--telemetry "$WORK/cooperative.jsonl" 2>"$WORK/cooperative.err" || fail "cooperative startup failed"
+python3 - "$WORK/cooperative.jsonl" <<'PY'
+import json, sys
+rows = [json.loads(line) for line in open(sys.argv[1])]
+assert rows and all(c['prediction_mode'] == 'cooperative' for r in rows for c in r['clusters'])
+assert all(c['prediction_corrections'] == 0 for r in rows for c in r['clusters'])
+assert all(c['observed_max_mhz'] > 0 for r in rows for c in r['clusters'])
+PY
+[ "$(cat "$MAXF")" = "$ORIG" ] || fail "cooperative startup did not restore frequency limits"
+[ ! -f "$JOURNAL" ] || fail "cooperative startup left a journal"
+pass "cooperative cold start keeps fallback, valid telemetry and restoration"
 
 # 3. Crash recovery: kill -9 leaves the journal; --restore puts values back.
 LERWATT_SIM_ROOT=$ROOT "$D" "${SYSROOT_ARGS[@]}" 2>"$WORK/d2.err" &

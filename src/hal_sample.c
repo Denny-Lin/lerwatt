@@ -129,6 +129,12 @@ int lw_sample(const struct lw_system *sys, struct lw_cpustat *hist, struct lw_sa
 		if (lw_read_u64(path, &v) || !v || v > UINT32_MAX)
 			return -EIO;
 		s->cur_khz[i] = (uint32_t)v;
+		lw_path(sys, path, sizeof(path),
+			"/sys/devices/system/cpu/cpufreq/policy%d/scaling_max_freq", p->id);
+		/* Missing readback prevents cooperative action support, but does not
+		 * change the established standalone sampling/fallback behavior. */
+		if (!lw_read_u64(path, &v) && v && v <= UINT32_MAX)
+			s->max_khz[i] = (uint32_t)v;
 
 		for (int c = 0; c < p->ncpus; c++) {
 			int cpu = p->cpus[c];

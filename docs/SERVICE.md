@@ -197,3 +197,15 @@ sudo python3 tests/test_service_systemd.py --allow-systemd-test \
 Portable and fixture tests also cover checkpoint rejection, notifications, worker failures, ownership checks and helper installation/removal. These results establish software lifecycle behavior in their recorded environments. They are not one-hour, 24-hour or seven-day physical-hardware measurements of temperature, energy, performance or reliability.
 
 References: systemd's [restart/watchdog and stop hooks](https://www.freedesktop.org/software/systemd/man/latest/systemd.service.html), [notification protocol](https://www.freedesktop.org/software/systemd/man/latest/sd_notify.html) and [unit lifecycle](https://www.freedesktop.org/software/systemd/man/latest/systemd.unit.html).
+
+## Cooperative prediction opt-in
+
+The service preserves its selected prediction mode across upgrades. The default
+is `nominal`; existing configs without a `prediction` key keep the original path.
+After target-machine validation, `./deploy.sh install --policy mpc --prediction
+cooperative --period-ms 100` opts into the experimental mode.
+`./deploy.sh install --prediction nominal` returns to the original predictor.
+Watchdog, recovery, initial user bounds and Lertick settings are retained. Mode
+changes invalidate incompatible model checkpoint fingerprints. See
+[the implementation and limits](COOPERATIVE_PREDICTION.md) and
+[the recorded regressions](../results/cooperative-prediction/README.md).

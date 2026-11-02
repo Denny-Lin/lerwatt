@@ -29,8 +29,10 @@ averages or confidence intervals.
 [All control comparisons and adverse cases →](docs/SIMULATION.md#4-control-and-forecast-results)
 
 **Physical power savings, battery life and application throughput remain
-unmeasured.** The improved point forecast is telemetry; it does not drive CPU
-limits. A separate 192-run simulator-module study reduced mean forecast MAE by
+unmeasured.** The original `nominal` prediction path keeps point forecasts separate from CPU
+limits. An experimental, opt-in cooperative predictor can now tighten five-second
+MPC decisions within a validated action context; small finite-job regressions
+keep it disabled by default. [Implementation and limits](docs/COOPERATIVE_PREDICTION.md). A separate 192-run simulator-module study reduced mean forecast MAE by
 28.95–29.51%, with a small worst-profile regression; it uses a different dataset.
 [Module results →](results/point-model-observations/README.md)
 

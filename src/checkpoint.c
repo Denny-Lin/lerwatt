@@ -162,6 +162,9 @@ static int fingerprint(const struct lw_system *sys, const struct lw_ctl_params *
 						 sizeof(sys->zones[0].temp_path))) return -EINVAL;
 	h = hash_number(h, (uint32_t)p->soft_limit_mc); h = hash_number(h, (uint32_t)p->raw_limit_mc);
 	h = hash_number(h, p->policy); h = hash_number(h, p->cross_cluster);
+	/* Preserve existing nominal fingerprints; cooperative epochs always
+	 * start cold and never persist delayed labels or action-specific weights. */
+	if (p->cooperative_prediction) h = hash_number(h, UINT64_C(0x434f4f5031));
 	h = hash_number(h, p->temporal_forecast); h = hash_number(h, p->down_step_ms);
 	h = hash_number(h, p->up_step_ms); h = hash_number(h, p->mpc_up_step_ms);
 	for (size_t i = 0; i < sizeof(settings) / sizeof(settings[0]); i++) {
@@ -292,9 +295,11 @@ int lw_checkpoint_load(const char *path, const struct lw_system *sys,
 	size_t length;
 	int ret, dir, trained = 0;
 	time_t now;
-	if (!params || !states) return -EINVAL;
+	if (!sys || !params || !states) return -EINVAL;
 	ret = fingerprint(sys, params, &identity);
 	if (ret) return ret;
+	for (int i = 0; i < sys->npolicies; i++)
+		if (states[i].predictor.ops) return -ENOTSUP;
 	dir = parent_open(path, name, sizeof(name));
 	if (dir < 0) return dir;
 	ret = read_blob(dir, name, data, &length); close(dir);
@@ -322,7 +327,7 @@ int lw_checkpoint_load(const char *path, const struct lw_system *sys,
 		}
 	}
 	if (!trained) return -EINVAL;
-	for (int i = 0; i < sys->npolicies; i++) if (rows[i].valid) inject(&states[i].tm, &rows[i]);
+	for (int i = 0; i < sys->npolicies; i++) if (rows[i].valid) inject(&states[i].predictor.thermal, &rows[i]);
 	return 0;
 }
 
@@ -336,9 +341,11 @@ int lw_checkpoint_save(const char *path, const struct lw_system *sys,
 	int ret, dir, fd = -1, trained = 0;
 	time_t now;
 	static unsigned int serial;
-	if (!params || !states) return -EINVAL;
+	if (!sys || !params || !states) return -EINVAL;
 	ret = fingerprint(sys, params, &identity);
 	if (ret) return ret;
+	for (int i = 0; i < sys->npolicies; i++)
+		if (states[i].predictor.ops) return -ENOTSUP;
 	memcpy(data, magic, sizeof(magic)); put32(data + 8, 1);
 	put32(data + 12, (uint32_t)sys->npolicies); put64(data + 16, identity);
 	now = time(NULL); if (now < 0) return -EIO;
@@ -347,7 +354,7 @@ int lw_checkpoint_save(const char *path, const struct lw_system *sys,
 		unsigned char *record = data + CP_HEADER + (size_t)i * CP_RECORD;
 		struct learned row;
 		put32(record + 4, (uint32_t)sys->policies[i].id);
-		extract(&row, &states[i].tm);
+		extract(&row, &states[i].predictor.thermal);
 		if (!states[i].init || !valid_model(&row)) continue;
 		put32(record, 1); put64(record + 8, row.samples); trained++;
 		for (unsigned int j = 0; j < CP_DOUBLES; j++) {

@@ -175,7 +175,7 @@ static int evaluate(const struct profile *f)
 				add(&scores[2], saved->candidate, observed[1]);
 			}
 			if (temporal)
-				point[k] = state[k].tm;
+				point[k] = state[k].predictor.thermal;
 			else
 				lw_tm_observe(&point[k], observed[1], observed[0], outputs[k].est_power_w,
 					      in->other_power_w, .1);

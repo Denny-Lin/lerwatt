@@ -1,0 +1,32 @@
+{
+  "cooperative": {
+    "duration_s": 180,
+    "warmup_s": 120,
+    "smoke_only": true,
+    "model_ready_rows": 896,
+    "correction_queries": 0,
+    "daemon_user_cpu_s": 0.027474,
+    "daemon_system_cpu_s": 0.064107,
+    "restored_knobs": true,
+    "journal_removed": true,
+    "simulator_summary": "lerwatt-sim: rk3588 at /var/tmp/lerwatt-cooperative-runtime-final6/steps-bare-15C/root, cooling bare, ambient 15.0 C, load trace:/var/tmp/lerwatt-cooperative-runtime-final6/steps-bare-15C/load.txt, tick 10 ms\nlerwatt-sim: 180.1 s simulated in 180.1 s: energy 990.4 J (mean 5.50 W), work served 94.4%, 0 throttle steps, peak 46.2 / 46.2 / 48.1 C (big0 / big1 / little), 0 bad writes\n",
+    "mae_c": 0.5541074681238612,
+    "reference_mae_c": 0.5319289617486336,
+    "original_knob_count": 30
+  },
+  "nominal": {
+    "duration_s": 180,
+    "warmup_s": 120,
+    "smoke_only": true,
+    "model_ready_rows": 896,
+    "correction_queries": 0,
+    "daemon_user_cpu_s": 0.041082,
+    "daemon_system_cpu_s": 0.047402,
+    "restored_knobs": true,
+    "journal_removed": true,
+    "simulator_summary": "lerwatt-sim: rk3588 at /var/tmp/lerwatt-nominal-runtime-final6/steps-bare-15C/root, cooling bare, ambient 15.0 C, load trace:/var/tmp/lerwatt-nominal-runtime-final6/steps-bare-15C/load.txt, tick 10 ms\nlerwatt-sim: 180.1 s simulated in 180.1 s: energy 990.4 J (mean 5.50 W), work served 94.4%, 0 throttle steps, peak 46.2 / 46.2 / 48.1 C (big0 / big1 / little), 0 bad writes\n",
+    "mae_c": 0.5595185185185183,
+    "reference_mae_c": 0.534159684274438,
+    "original_knob_count": 30
+  }
+}

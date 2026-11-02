@@ -1,0 +1,9 @@
+cc -O2 -g -std=c11 -D_GNU_SOURCE -Wall -Wextra -Wshadow -Werror -Iinclude -Isrc -o build/test_predict tests/test_predict.c src/controller.c src/learn.c src/forecast.c src/temporal.c src/predict.c -lm
+tests/test_predict.c:163:55: error: use of undeclared identifier 'q'
+  163 |         if (((const struct alternative *)ctx)->local_only && q->total_mean_w > 1.1)
+      |                                                              ^
+tests/test_predict.c:164:3: error: void function 'alternative_observe' should not return a value [-Wreturn-mismatch]
+  164 |                 return false;
+      |                 ^      ~~~~~
+2 errors generated.
+make: *** [build/test_predict] Error 1

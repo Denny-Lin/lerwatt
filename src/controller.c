@@ -23,6 +23,7 @@ void lw_ctl_default_params(struct lw_ctl_params *p, int32_t lowest_passive_mc)
 	p->policy = LW_POLICY_RULE;
 	p->cross_cluster = false;
 	p->temporal_forecast = true;
+	p->cooperative_prediction = false;
 	p->mpc_horizon_s = 5.0;
 	p->mpc_over_soft_c = p->deadband_c;	/* same filtered line as the rule */
 	p->mpc_margin_c = 0.5;
@@ -95,23 +96,77 @@ static double plan_peak_w(const struct lw_ctl_in *in, const struct lw_ctl_state 
  * moved by what the model says changes. Working from the measured peak cancels
  * any bias in the model's absolute temperatures.
  */
-static double plan_temp_c(const struct lw_ctl_in *in, const struct lw_ctl_state *st, int i,
-			  double horizon_s)
+static bool plan_prediction(const struct lw_ctl_params *p, const struct lw_ctl_in *in,
+			    const struct lw_ctl_state *st, int i, double total,
+			    double horizon_s, struct lw_prediction_result *r)
 {
-	double total = plan_mean_w(in, st, i) + st->mpc_other;
+	struct lw_prediction_query q = {
+		.purpose = LW_PREDICT_CONTROL, .now_ns = st->predictor.observation.now_ns,
+		.horizon_s = horizon_s, .package_c = st->pkg_c, .anchor_c = st->mpc_peak_c,
+		.own_mean_w = plan_mean_w(in, st, i), .total_mean_w = total,
+		.own_peak_w = plan_peak_w(in, st, i),
+		.reference_peak_w = plan_peak_w(in, st, st->ceil_idx),
+		.candidate_khz = in->opps[i].khz, .cooperative = p->cooperative_prediction,
+		.work_capacity = in->ncpus * (plan_saturated(st) ? st->mpc_busy * perf_of(in, i) :
+			fmin(st->mpc_work_khz / in->opps[in->nopps - 1].khz * in->capacity, perf_of(in, i))),
+		.power_quality = in->power_quality,
+	};
+	return lw_predictor_predict(&st->predictor, &q, r);
+}
 
-	return st->mpc_peak_c + lw_tm_package(&st->tm, st->pkg_c, total, horizon_s) - st->pkg_c +
-	       lw_tm_peak_offset(&st->tm, plan_peak_w(in, st, i)) -
-	       lw_tm_peak_offset(&st->tm, plan_peak_w(in, st, st->ceil_idx));
+static double plan_temp_c(const struct lw_ctl_params *p, const struct lw_ctl_in *in,
+			 struct lw_ctl_state *st, int i, double horizon_s)
+{
+	struct lw_prediction_result r;
+	st->prediction_queries++;
+	if (!plan_prediction(p, in, st, i, plan_mean_w(in, st, i) + st->mpc_other, horizon_s, &r))
+		return INFINITY;
+	st->prediction_corrections += r.corrected;
+	return r.upper_c;
 }
 
 /* Change the ceiling, and expect the peak to move with the hot spot's offset. */
-static void plan_move(const struct lw_ctl_in *in, struct lw_ctl_state *st, int i)
+static void plan_move(const struct lw_ctl_params *p, const struct lw_ctl_in *in,
+		      struct lw_ctl_state *st, int i)
 {
-	st->mpc_peak_c += lw_tm_peak_offset(&st->tm, plan_peak_w(in, st, i)) -
-			  lw_tm_peak_offset(&st->tm, plan_peak_w(in, st, st->ceil_idx));
+	struct lw_prediction_result r;
+	if (plan_prediction(p, in, st, i, plan_mean_w(in, st, i) + st->mpc_other, p->mpc_horizon_s, &r))
+		st->mpc_peak_c += r.hot_delta_c;
 	st->ceil_idx = i;
 	st->ceiling_changes++;
+}
+
+static void observe_prediction(const struct lw_ctl_params *p, const struct lw_ctl_in *in,
+			       struct lw_ctl_state *st, const struct lw_ctl_out *out,
+			       uint64_t now_ns, double dt_s, bool thermal_update)
+{
+	struct lw_prediction_observation o = {
+		.now_ns = now_ns, .hot_c = in->temp_mc / 1000.0,
+		.thermal_hot_c = st->temp_f_mc / 1000.0,
+		.package_c = in->package_mc == INT32_MIN ? NAN : in->package_mc / 1000.0,
+		.own_power_w = out->est_power_w, .other_power_w = in->other_power_w, .dt_s = dt_s,
+		.observed_khz = in->cur_khz,
+		.ceiling_khz = p->cooperative_prediction ? in->effective_max_khz : in->opps[st->ceil_idx].khz,
+		.temporal = p->temporal_forecast, .cooperative = p->cooperative_prediction,
+		.thermal_update = thermal_update,
+	};
+	lw_predictor_observe(&st->predictor, &o);
+}
+
+static void prediction_outputs(const struct lw_ctl_state *st, struct lw_ctl_out *out)
+{
+	out->forecast_c = st->predictor.point_c;
+	out->forecast_base_c = st->predictor.base_c;
+	out->forecast_correction_c = st->predictor.point_correction_c;
+	out->forecast_source = st->predictor.point_source;
+	out->forecast_labels = st->predictor.forecaster.labels[LW_FORECAST_HOT][LW_FORECAST_PERSISTENCE];
+	out->forecast_dropped = st->predictor.forecaster.dropped;
+	out->temporal_labels = st->predictor.temporal.labels;
+	out->temporal_dropped = st->predictor.temporal.dropped;
+	out->prediction_queries = st->prediction_queries;
+	out->prediction_corrections = st->prediction_corrections;
+	for (int e = 0; e < LW_FORECAST_EXPERTS; e++)
+		out->forecast_weights[e] = st->predictor.forecaster.output_weight[LW_FORECAST_HOT][e];
 }
 
 static int lowest_idx_at_least(const struct lw_ctl_in *in, double khz)
@@ -122,15 +177,27 @@ static int lowest_idx_at_least(const struct lw_ctl_in *in, double khz)
 	return in->nopps - 1;
 }
 
+static int available_top(const struct lw_ctl_params *p, const struct lw_ctl_in *in)
+{
+	int top = in->nopps - 1;
+	if (p->cooperative_prediction && in->allowed_max_khz)
+		while (top > 0 && in->opps[top].khz > in->allowed_max_khz)
+			top--;
+	return top;
+}
+
 static void ctl_step(const struct lw_ctl_params *p, const struct lw_ctl_in *in,
 		 struct lw_ctl_state *st, struct lw_ctl_out *out,
 		 uint64_t now_ns, double dt_s, bool joint)
 {
-	int top = in->nopps - 1;
+	int top = available_top(p, in);
 	int min_idx = lowest_idx_at_least(in, p->min_ceiling_frac * in->opps[top].khz);
 	double h, he, pmin, pmax, u, budget;
 	bool cool_slow;
 	int target;
+	bool prediction_observed = false;
+	if (min_idx > top)
+		min_idx = top;
 
 	if (!st->init) {
 		st->init = true;
@@ -138,8 +205,10 @@ static void ctl_step(const struct lw_ctl_params *p, const struct lw_ctl_in *in,
 		st->ceil_idx = top;
 		st->last_down_ns = st->last_up_ns = 0;
 		st->ceiling_changes = 0;
-		lw_tm_init(&st->tm);
+		lw_predictor_init(&st->predictor);
 	}
+	if (st->ceil_idx > top)
+		st->ceil_idx = top;
 
 	out->floor_khz = 0;
 	out->resume_latency_us = -1;
@@ -149,6 +218,9 @@ static void ctl_step(const struct lw_ctl_params *p, const struct lw_ctl_in *in,
 	out->model_ready = false;
 	out->joint_active = false;
 	out->predicted_c = NAN;
+	out->prediction_queries = out->prediction_corrections = 0;
+	out->prediction_reason = LW_PREDICT_NOMINAL;
+	out->prediction_nominal_c = out->prediction_upper_c = NAN;
 	out->forecast_c = NAN;
 	out->forecast_base_c = NAN;
 	out->forecast_correction_c = 0;
@@ -242,23 +314,37 @@ static void ctl_step(const struct lw_ctl_params *p, const struct lw_ctl_in *in,
 		temp_c = fmax(st->temp_f_mc, in->temp_mc - p->mpc_raw_gap_c * 1000.0) / 1000.0;
 		st->mpc_peak_c = fmax(temp_c, st->mpc_peak_c + (temp_c - st->mpc_peak_c) *
 				      clampd(dt_s / p->mpc_peak_filter_s, 0.0, 1.0));
-		lw_tm_observe(&st->tm, st->temp_f_mc / 1000.0, in->package_mc / 1000.0, out->est_power_w,
-			      in->other_power_w, dt_s);
+		/* Preserve the original filtered thermal label and raw point label. */
+		observe_prediction(p, in, st, out, now_ns, dt_s, true);
+		prediction_observed = true;
 		/* Plan on load averaged over bursts, as the rule's slow filter does. */
 		st->mpc_busy += (in->busy_mean - st->mpc_busy) * slow;
 		st->mpc_work_khz += (in->busy_mean * in->cur_khz - st->mpc_work_khz) * slow;
 		st->mpc_other += (in->other_power_w - st->mpc_other) * slow;
 		st->mpc_peak_busy = fmax(in->busy_mean, st->mpc_peak_busy *
 					 exp(-dt_s / p->mpc_peak_memory_s));
-		out->model_ready = lw_tm_ready(&st->tm);
+		out->model_ready = lw_predictor_ready(&st->predictor);
 		if (out->model_ready) {
-			double pred = plan_temp_c(in, st, st->ceil_idx, p->mpc_horizon_s);
+			double pred = plan_temp_c(p, in, st, st->ceil_idx, p->mpc_horizon_s);
 			bool over = temp_c > limit;
 			/* The zone filter still holds the heat of the last step down. */
 			bool settled = now_ns - st->last_down_ns >=
 				       (uint64_t)(3 * p->temp_filter_s * 1e9);
 
+			struct lw_prediction_result decision;
+			if (!isfinite(pred) || !plan_prediction(p, in, st, st->ceil_idx,
+				plan_mean_w(in, st, st->ceil_idx) + st->mpc_other, p->mpc_hold_s, &decision)) {
+				out->model_ready = false;
+				out->prediction_reason = LW_PREDICT_INVALID;
+				goto rule;
+			}
 			out->predicted_c = pred;
+			if (plan_prediction(p, in, st, st->ceil_idx,
+				plan_mean_w(in, st, st->ceil_idx) + st->mpc_other, p->mpc_horizon_s, &decision)) {
+				out->prediction_reason = decision.reason;
+				out->prediction_nominal_c = decision.nominal_c;
+				out->prediction_upper_c = decision.upper_c;
+			}
 			if (joint) {
 				st->mpc_periods++;
 				goto priced;
@@ -283,16 +369,16 @@ static void ctl_step(const struct lw_ctl_params *p, const struct lw_ctl_in *in,
 						    p->mpc_up_step_ms / 1000.0;
 
 				for (int i = plan; i >= min_idx; i--)
-					if (plan_temp_c(in, st, i, p->mpc_horizon_s) <= limit) {
+					if (plan_temp_c(p, in, st, i, p->mpc_horizon_s) <= limit) {
 						plan = i;
 						break;
 					}
-				plan_move(in, st, plan);
+				plan_move(p, in, st, plan);
 				st->last_down_ns = now_ns;
 			} else if (st->ceil_idx < top && up_ok && !over &&
-				   plan_temp_c(in, st, st->ceil_idx + 1, p->mpc_hold_s) <=
+				   plan_temp_c(p, in, st, st->ceil_idx + 1, p->mpc_hold_s) <=
 				   limit - p->mpc_margin_c) {
-				plan_move(in, st, st->ceil_idx + 1);
+				plan_move(p, in, st, st->ceil_idx + 1);
 				st->last_up_ns = now_ns;
 			}
 			st->mpc_periods++;
@@ -300,6 +386,7 @@ static void ctl_step(const struct lw_ctl_params *p, const struct lw_ctl_in *in,
 		}
 	}
 
+rule:
 	/*
 	 * One OPP at a time; down only above the band, up only below it, and
 	 * faster down than up.
@@ -318,37 +405,9 @@ static void ctl_step(const struct lw_ctl_params *p, const struct lw_ctl_in *in,
 	}
 priced:
 	if (p->policy == LW_POLICY_MPC) {
-		double observed[2] = {
-			in->package_mc == INT32_MIN ? NAN : in->package_mc / 1000.0,
-			in->temp_mc / 1000.0,
-		};
-		double candidate[2][3] = {
-			{ observed[0], NAN, NAN }, { observed[1], NAN, NAN },
-		};
-
-		if (in->package_mc != INT32_MIN && lw_tm_ready(&st->tm)) {
-			candidate[0][1] = lw_tm_package(&st->tm, observed[0], st->tm.last_total_w, 5);
-			candidate[1][1] = candidate[0][1] + lw_tm_offset(&st->tm, st->tm.last_own_w);
-			candidate[0][2] = lw_tm_forecast_package(&st->tm, observed[0], 5);
-			candidate[1][2] = lw_tm_forecast_hot(&st->tm, observed[0], 5);
-		}
-		lw_forecast_step(&st->forecaster, now_ns, observed, candidate);
-		out->forecast_c = st->forecaster.prediction[LW_FORECAST_HOT];
-		out->forecast_base_c = out->forecast_c;
-		out->forecast_source = (int)st->forecaster.selected[LW_FORECAST_HOT];
-		out->forecast_labels = st->forecaster.labels[LW_FORECAST_HOT][LW_FORECAST_PERSISTENCE];
-		out->forecast_dropped = st->forecaster.dropped;
-		if (p->temporal_forecast) {
-			out->forecast_c = lw_temporal_step(&st->temporal, now_ns, observed[1],
-							 out->forecast_base_c, candidate[1]);
-			out->forecast_correction_c = st->temporal.correction_c;
-			out->temporal_labels = st->temporal.labels;
-			out->temporal_dropped = st->temporal.dropped;
-			if (st->temporal.active)
-				out->forecast_source = LW_FORECAST_TEMPORAL;
-		}
-		for (int e = 0; e < LW_FORECAST_EXPERTS; e++)
-			out->forecast_weights[e] = st->forecaster.output_weight[LW_FORECAST_HOT][e];
+		if (!prediction_observed)
+			observe_prediction(p, in, st, out, now_ns, dt_s, false);
+		prediction_outputs(st, out);
 	}
 	if (st->ceil_idx < min_idx)
 		st->ceil_idx = min_idx;
@@ -393,7 +452,7 @@ void lw_ctl_step_group(const struct lw_ctl_params *p, const struct lw_ctl_in *in
 	int lo[LW_MAX_POLICIES], idx[LW_MAX_POLICIES], best[LW_MAX_POLICIES];
 	unsigned int combinations = 1;
 	bool joint = p->cross_cluster && p->policy == LW_POLICY_MPC && n > 1 && n <= LW_MAX_POLICIES;
-	double best_work = -1, best_power = INFINITY, best_excess = INFINITY;
+	double best_work = -1, best_power = INFINITY, best_total = 0, best_excess = INFINITY;
 	double limit = p->soft_limit_mc / 1000.0 + p->mpc_over_soft_c - p->mpc_margin_c;
 
 	if (n < 1 || n > LW_MAX_POLICIES)
@@ -401,13 +460,16 @@ void lw_ctl_step_group(const struct lw_ctl_params *p, const struct lw_ctl_in *in
 	for (int k = 0; k < n; k++) {
 		int count;
 
-		lo[k] = lowest_idx_at_least(&in[k], p->min_ceiling_frac * in[k].opps[in[k].nopps - 1].khz);
-		count = in[k].nopps - lo[k];
+		int top = available_top(p, &in[k]);
+		lo[k] = lowest_idx_at_least(&in[k], p->min_ceiling_frac * in[k].opps[top].khz);
+		if (lo[k] > top)
+			lo[k] = top;
+		count = top + 1 - lo[k];
 		if (count < 1 || combinations > 65536u / (unsigned int)count)
 			joint = false;
 		else
 			combinations *= (unsigned int)count;
-		if (!lw_tm_ready(&st[k].tm) || in[k].temp_mc == INT32_MIN || in[k].package_mc == INT32_MIN)
+		if (!lw_predictor_ready(&st[k].predictor) || in[k].temp_mc == INT32_MIN || in[k].package_mc == INT32_MIN)
 			joint = false;
 		for (int i = 0; i < in[k].nopps; i++)
 			if (!in[k].opps[i].power_uw)
@@ -428,7 +490,7 @@ void lw_ctl_step_group(const struct lw_ctl_params *p, const struct lw_ctl_in *in
 	for (int k = 0; k < n; k++)
 		idx[k] = lo[k];
 	for (unsigned int c = 0; c < combinations; c++) {
-		double total = 0, work = 0, excess = 0;
+		double total = 0, work = 0, predicted_power = 0, excess = 0;
 		bool allowed = true;
 
 		for (int k = 0; k < n; k++) {
@@ -436,19 +498,22 @@ void lw_ctl_step_group(const struct lw_ctl_params *p, const struct lw_ctl_in *in
 			if (in[k].temp_mc >= p->raw_limit_mc && idx[k] > lo[k])
 				allowed = false;
 			total += plan_mean_w(&in[k], &st[k], idx[k]);
-			work += in[k].ncpus * (plan_saturated(&st[k]) ?
-				st[k].mpc_busy * perf_of(&in[k], idx[k]) :
-				fmin(st[k].mpc_work_khz / in[k].opps[in[k].nopps - 1].khz * in[k].capacity,
-				     perf_of(&in[k], idx[k])));
 		}
 		for (int k = 0; k < n; k++) {
-			double delta = lw_tm_peak_offset(&st[k].tm, plan_peak_w(&in[k], &st[k], idx[k])) -
-				lw_tm_peak_offset(&st[k].tm, plan_peak_w(&in[k], &st[k], st[k].ceil_idx));
-			double near = st[k].mpc_peak_c + delta +
-				lw_tm_package(&st[k].tm, st[k].pkg_c, total, p->mpc_horizon_s) - st[k].pkg_c;
-			double hold = st[k].mpc_peak_c + delta +
-				lw_tm_package(&st[k].tm, st[k].pkg_c, total, p->mpc_hold_s) - st[k].pkg_c;
-
+			struct lw_prediction_result near_result, hold_result;
+			st[k].prediction_queries += 2;
+			bool valid = plan_prediction(p, &in[k], &st[k], idx[k], total, p->mpc_horizon_s, &near_result) &&
+				plan_prediction(p, &in[k], &st[k], idx[k], total, p->mpc_hold_s, &hold_result);
+			double near = valid ? near_result.upper_c : INFINITY;
+			double hold = valid ? hold_result.upper_c : INFINITY;
+			if (!valid)
+				allowed = false;
+			else
+				st[k].prediction_corrections += near_result.corrected + hold_result.corrected;
+			if (valid) {
+				work += near_result.work_capacity;
+				predicted_power += near_result.cpu_power_w;
+			}
 			excess = fmax(excess, fmax(near, hold) - limit);
 		}
 		/* Feasibility first. If no combination fits yet, reduce the largest
@@ -456,34 +521,56 @@ void lw_ctl_step_group(const struct lw_ctl_params *p, const struct lw_ctl_in *in
 		 */
 		if (allowed && (excess < best_excess - 1e-6 ||
 		    (fabs(excess - best_excess) <= 1e-6 &&
-		     (work > best_work + 1e-6 || (fabs(work - best_work) <= 1e-6 && total < best_power))))) {
+		     (work > best_work + 1e-6 || (fabs(work - best_work) <= 1e-6 && predicted_power < best_power))))) {
 			best_excess = excess;
 			best_work = work;
-			best_power = total;
+			best_power = predicted_power;
+			best_total = total;
 			for (int k = 0; k < n; k++)
 				best[k] = idx[k];
 		}
 		for (int k = n - 1; k >= 0; k--) {
-			if (++idx[k] < in[k].nopps)
+			if (++idx[k] <= available_top(p, &in[k]))
 				break;
 			idx[k] = lo[k];
 		}
 	}
-	if (best_work < 0)
+	if (best_work < 0) {
+		/* A replacement may support independent predictions but reject every
+		 * coupled candidate. Do not report a live joint plan or hold a model-
+		 * selected action indefinitely. Re-evaluate the existing rule with
+		 * dt=0: no duplicate filtering, integration, learning or labels. */
+		struct lw_ctl_params fallback = *p;
+		fallback.policy = LW_POLICY_RULE;
+		for (int k = 0; k < n; k++) {
+			if (out[k].model_ready && st[k].mpc_periods) st[k].mpc_periods--;
+			ctl_step(&fallback, &in[k], &st[k], &out[k], now_ns, 0, false);
+			prediction_outputs(&st[k], &out[k]);
+			out[k].prediction_reason = LW_PREDICT_INVALID;
+		}
 		return;
+	}
 	for (int k = 0; k < n; k++) {
 		if (best[k] != st[k].ceil_idx) {
 			if (best[k] < st[k].ceil_idx)
 				st[k].last_down_ns = now_ns;
 			else
 				st[k].last_up_ns = now_ns;
-			plan_move(&in[k], &st[k], best[k]);
+			plan_move(p, &in[k], &st[k], best[k]);
 		}
 		out[k].ceiling_khz = in[k].opps[best[k]].khz;
 		out[k].ceiling_cap = perf_of(&in[k], best[k]);
 		out[k].budget_w = plan_mean_w(&in[k], &st[k], best[k]);
-		out[k].predicted_c = st[k].mpc_peak_c +
-			lw_tm_package(&st[k].tm, st[k].pkg_c, best_power, p->mpc_horizon_s) - st[k].pkg_c;
+		struct lw_prediction_result selected;
+		if (plan_prediction(p, &in[k], &st[k], best[k], best_total, p->mpc_horizon_s, &selected)) {
+			out[k].budget_w = selected.cpu_power_w;
+			out[k].predicted_c = selected.upper_c;
+			out[k].prediction_nominal_c = selected.nominal_c;
+			out[k].prediction_upper_c = selected.upper_c;
+			out[k].prediction_reason = selected.reason;
+		}
+		out[k].prediction_queries = st[k].prediction_queries;
+		out[k].prediction_corrections = st[k].prediction_corrections;
 		if (out[k].floor_khz > out[k].ceiling_khz) {
 			out[k].floor_khz = out[k].ceiling_khz;
 			out[k].floor_cap = out[k].ceiling_cap;
