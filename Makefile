@@ -39,7 +39,7 @@ $(BUILD)/lerwattd: $(D_SRCS) $(wildcard include/lerwatt/*.h src/*.h) | $(BUILD)
 $(BUILD)/lerwattd-standalone: $(D_SRCS) $(wildcard include/lerwatt/*.h src/*.h) | $(BUILD)
 	$(CC) $(CPPFLAGS) $(CFLAGS) -DLW_NO_BPF -o $@ $(D_SRCS) $(LDLIBS)
 
-hardware: $(BUILD)/lerwattd-standalone
+hardware: $(BUILD)/lerwattd $(BUILD)/lerwattd-standalone
 
 # Optional native Lertick coordination; raw BPF syscalls, no libbpf dependency.
 hardware-lertick: $(BUILD)/lerwattd

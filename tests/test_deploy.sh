@@ -453,18 +453,18 @@ lacks SUDO
 # exits maintenance before activation and starts/retains boot enablement.
 reset_log
 service_prefix=$tmp/persistent\ prefix
-# A fresh independent install uses MPC and nominal predictions. Merely having
-# the full daemon in the source/build tree must not opt into coordination.
+# A fresh install keeps its own nominal MPC and automatically waits for a
+# compatible peer; neither an installation flag nor a running peer is needed.
 PREFIX="$service_prefix" "$fixture/deploy.sh" install > "$tmp/output" 2>&1
-has 'BUILD_TARGET build/lerwattd-standalone'
+has 'BUILD_TARGET build/lerwattd'
 grep -F -x 'policy=mpc' "$SERVICE_CONFIG" >/dev/null || die 'new standalone install did not default to MPC'
 grep -F -x 'prediction=nominal' "$SERVICE_CONFIG" >/dev/null || die 'new standalone install enabled cooperative prediction'
-grep -F -x 'contract=off' "$SERVICE_CONFIG" >/dev/null || die 'new standalone install enabled coordination'
+grep -F -x 'contract=auto' "$SERVICE_CONFIG" >/dev/null || die 'fresh install did not enable automatic discovery'
 reset_log
 FAKE_UID=0 "$service_prefix/bin/lerwatt" service-run > "$tmp/output" 2>&1
-has 'ARG mpc'; has 'ARG nominal'; has 'ARG --no-contract'
+has 'ARG mpc'; has 'ARG nominal'; lacks 'ARG --no-contract'
 reset_log
-PREFIX="$service_prefix" "$fixture/deploy.sh" install --policy rule --period-ms 250 \
+PREFIX="$service_prefix" "$fixture/deploy.sh" install --no-lertick --policy rule --period-ms 250 \
     --soft-limit 72.5 --temperature-sensor /sys/class/thermal/thermal_zone0/temp > "$tmp/output" 2>&1
 has 'MODE check'
 has 'ARG install-locked'
@@ -523,27 +523,23 @@ reset_log
 expect_status 1 env PREFIX="$service_prefix" "$fixture/deploy.sh" install --lertick
 lacks 'SYSTEMCTL stop lerwatt.service'; lacks 'MAINTENANCE BEGIN'
 reset_log
-expect_status 1 env PREFIX="$service_prefix" "$fixture/deploy.sh" install --lertick --period-ms 100
-grep -F 'cooperative prediction requires policy=mpc' "$tmp/output" >/dev/null || die 'incompatible saved rule policy was not rejected'
-lacks 'SYSTEMCTL stop lerwatt.service'; lacks 'MAINTENANCE BEGIN'
-reset_log
 PREFIX="$service_prefix" "$fixture/deploy.sh" install --lertick --policy mpc --period-ms 100 > "$tmp/output" 2>&1
 has 'BUILD_TARGET build/lerwattd'
 grep -F -x 'contract=auto' "$SERVICE_CONFIG" >/dev/null || die 'coordination opt-in was not persisted'
-grep -F -x 'prediction=cooperative' "$SERVICE_CONFIG" >/dev/null || die 'explicit Lertick installation did not default to cooperative prediction'
+grep -F -x 'prediction=nominal' "$SERVICE_CONFIG" >/dev/null || die 'peer selection changed the private predictor'
 reset_log
 FAKE_UID=0 "$service_prefix/bin/lerwatt" service-run > "$tmp/output" 2>&1
 has 'MODE features'; has 'MODE run'; lacks 'ARG --no-contract'
-has 'ARG cooperative'
+has 'ARG nominal'
 reset_log
 PREFIX="$service_prefix" "$fixture/deploy.sh" install > "$tmp/output" 2>&1
 has 'BUILD_TARGET build/lerwattd'
 grep -F -x 'contract=auto' "$SERVICE_CONFIG" >/dev/null || die 'plain upgrade disabled coordination'
-grep -F -x 'prediction=cooperative' "$SERVICE_CONFIG" >/dev/null || die 'plain upgrade disabled cooperative prediction'
+grep -F -x 'prediction=nominal' "$SERVICE_CONFIG" >/dev/null || die 'plain upgrade changed prediction setting'
 reset_log
 FAKE_UID=0 "$service_prefix/bin/lerwatt" status > "$tmp/output" 2>&1
 grep -F 'Lertick coordination configured: auto' "$tmp/output" >/dev/null || die 'status omitted configured coordination mode'
-grep -F 'Prediction mode configured: cooperative' "$tmp/output" >/dev/null || die 'status omitted configured prediction mode'
+grep -F 'Prediction mode configured: nominal' "$tmp/output" >/dev/null || die 'status omitted configured prediction mode'
 # An explicit prediction choice wins in either argument order, including the
 # equals spelling. A plain upgrade retains an integrated user's opt-out.
 for arguments in '--lertick --prediction nominal' '--prediction=nominal --lertick'; do
@@ -556,14 +552,14 @@ done
 PREFIX="$service_prefix" "$fixture/deploy.sh" install > "$tmp/output" 2>&1
 grep -F -x 'prediction=nominal' "$SERVICE_CONFIG" >/dev/null || die 'upgrade lost integrated nominal opt-out'
 # Legacy integrated configs lacking the prediction key keep nominal on plain
-# upgrade. Only selecting --lertick again changes their installation default.
+# upgrade. Selecting --lertick also leaves private model selection alone.
 sed '/^prediction=/d' "$SERVICE_CONFIG" > "$tmp/config.legacy"
 cp "$tmp/config.legacy" "$SERVICE_CONFIG"
 reset_log
 PREFIX="$service_prefix" "$fixture/deploy.sh" install > "$tmp/output" 2>&1
 grep -F -x 'prediction=nominal' "$SERVICE_CONFIG" >/dev/null || die 'legacy upgrade silently enabled cooperative prediction'
 PREFIX="$service_prefix" "$fixture/deploy.sh" install --lertick > "$tmp/output" 2>&1
-grep -F -x 'prediction=cooperative' "$SERVICE_CONFIG" >/dev/null || die 'explicit integration reselection did not apply its default'
+grep -F -x 'prediction=nominal' "$SERVICE_CONFIG" >/dev/null || die 'integration reselection changed a private model'
 reset_log
 expect_status 1 env PREFIX="$service_prefix" FORCE_FEATURES=none "$fixture/deploy.sh" install --lertick
 lacks 'SYSTEMCTL stop lerwatt.service'; lacks 'MAINTENANCE BEGIN'
@@ -575,7 +571,7 @@ reset_log
 PREFIX="$service_prefix" "$fixture/deploy.sh" install --no-lertick > "$tmp/output" 2>&1
 has 'BUILD_TARGET build/lerwattd-standalone'
 grep -F -x 'contract=off' "$SERVICE_CONFIG" >/dev/null || die 'coordination opt-out was not persisted'
-grep -F -x 'prediction=nominal' "$SERVICE_CONFIG" >/dev/null || die 'standalone selection did not restore nominal default'
+grep -F -x 'prediction=nominal' "$SERVICE_CONFIG" >/dev/null || die 'disabling discovery changed the predictor'
 # Standalone cooperative prediction remains an independent explicit choice.
 for arguments in '--no-lertick --prediction cooperative' '--prediction=cooperative --no-lertick'; do
     reset_log

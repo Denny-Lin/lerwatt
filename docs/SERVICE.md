@@ -75,17 +75,17 @@ prediction=nominal
 period_ms=100
 soft_limit_c=auto
 temperature_sensor=auto
-contract=off
+contract=auto
 ```
 
 | Key | Accepted value |
 | --- | --- |
 | `policy` | `mpc` or `rule` |
-| `prediction` | `nominal` or `cooperative`; standalone default `nominal`, explicit `install --lertick` default `cooperative` |
+| `prediction` | `nominal` (default) or `cooperative`; independent of peer discovery |
 | `period_ms` | Integer `10` through `10000`; `contract=auto` requires `10` through `100` |
 | `soft_limit_c` | `auto`, or a positive Celsius value accepted by the daemon |
 | `temperature_sensor` | `auto`, or an actual CPU/package sensor input under `/sys/` |
-| `contract` | `off` (new-install default), or `auto` for optional Lertick coordination with the BPF-capable daemon |
+| `contract` | `auto` (new-install default), or explicit `off`; missing peers remain independent |
 
 Use one assignment per line, no spaces around `=`, shell syntax or inline comments. Blank lines and lines starting with `#` are accepted. The file is parsed as data, never sourced as a shell script. Unknown keys and invalid values prevent startup.
 
@@ -114,17 +114,15 @@ The service fixes the real-machine root and enables unlimited supervised operati
 ./deploy.sh install --lertick --period-ms 100
 ```
 
-This selects the full BPF-capable build, saves `contract=auto` and defaults to
-`prediction=cooperative`. `--prediction nominal` explicitly keeps original MPC
-predictions with coordination enabled. The helper checks capability and
-configuration before stopping the old service. A plain reinstall preserves
-both saved modes; `./deploy.sh install --no-lertick` disables coordination and
-defaults back to nominal prediction. An explicit `--prediction` wins over either
-installation flag in any order. New independent installations retain the
-BPF-free build and nominal MPC. Because settings are root-private, an upgrade
-without an explicit mode first asks sudo to read the validated mode, then builds
-as the normal user. Privileged reentry validates the configuration again before
-installing; a build/configuration mismatch fails before stopping the old service.
+Ordinary `./deploy.sh install` already selects the BPF-capable build and
+`contract=auto`; the legacy `--lertick` flag is no longer required. New services
+wait independently and reconnect to compatible peers automatically. Existing
+saved settings, including explicit off and prediction selection, survive plain
+upgrades. `--no-lertick` remains an explicit discovery opt-out. These choices
+never switch or replace the private predictor. Linux userspace BPF headers are
+required for automatic discovery; a BPF-free binary is available for explicit
+independent operation. Builds remain unprivileged, with configuration and
+capabilities validated before replacing the running service.
 
 The scheduler remains a separately installed and enabled project. Either may start first, stop or update independently. Compatible model-only updates need no peer update or joint retraining. Incompatible or expired records disable the handoff while local control continues. See the identical [integration guide](INTEGRATION.md) in both repositories for setup, ownership, ABI compatibility and failure behavior.
 
@@ -203,7 +201,7 @@ The [integration script](../tests/test_service_systemd.py) requires an explicit 
 
 ```sh
 sudo python3 tests/test_service_systemd.py --allow-systemd-test \
-  --daemon build/lerwattd-standalone
+  --daemon build/lerwattd
 ```
 
 Portable and fixture tests also cover checkpoint rejection, notifications, worker failures, ownership checks and helper installation/removal. These results establish software lifecycle behavior in their recorded environments. They are not one-hour, 24-hour or seven-day physical-hardware measurements of temperature, energy, performance or reliability.
@@ -212,20 +210,14 @@ References: systemd's [restart/watchdog and stop hooks](https://www.freedesktop.
 
 ## Cooperative prediction activation
 
-The service preserves its selected prediction mode across plain upgrades.
-New standalone installs default to independent MPC with nominal prediction;
-explicit `install --lertick` defaults to cooperative. Existing configs without
-a `prediction` key retain nominal on plain upgrade, even with coordination
-enabled; explicitly reselecting `--lertick` applies the new default.
-`./deploy.sh install --policy mpc --prediction cooperative --period-ms 100`
-also opts into the experimental mode without requiring Lertick.
-`./deploy.sh install --prediction nominal` returns to the original predictor.
-Existing rule or slow-period settings are not silently overwritten: cooperative
-mode requires MPC and a 10–100 ms period, otherwise installation fails before
-stopping the old service. Select compatible settings or explicit nominal mode.
-The integrated default does not imply better accuracy. Enabled prediction still
-uses nominal MPC whenever a correction fails its reliability checks. Rule
-fallback remains available when the required model is unavailable or invalid.
+New installations use nominal MPC, with automatic optional peer discovery.
+The private predictor is selected independently with `--prediction`; neither
+peer presence nor discovery flags change it. Saved cooperative selections
+remain cooperative after an upgrade or peer removal. Cooperative mode still
+requires MPC and a 10–100 ms period and retains every reliability gate. Enabled
+does not mean every correction is applied: unsupported or unreliable corrections
+use nominal MPC, and unavailable/invalid required models retain rule fallback.
+Neither controller's model upgrades require peer retraining.
 Watchdog, recovery, initial user bounds and Lertick settings are retained. Mode
 changes invalidate incompatible model checkpoint fingerprints. See
 [the implementation and limits](COOPERATIVE_PREDICTION.md) and

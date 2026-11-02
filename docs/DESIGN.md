@@ -12,10 +12,10 @@ and [sched-ext/scx](https://github.com/sched-ext/scx) as of 2026-10-30.
 That is a source reference, not a minimum kernel version or a claim of
 compatibility with every driver. Standalone Lerwatt does not require
 sched_ext; Lertick integration has separate kernel and BPF requirements.
-`deploy.sh` defaults to a BPF-free native daemon on the target Linux machine and
+`deploy.sh` builds an automatically discovering native daemon on the target Linux machine and
 provides checks, non-actuating preview, foreground trials and a persistent
 systemd service with independent watchdog recovery and learned-parameter
-checkpoints. `install --lertick` selects its full BPF-capable build and persists
+checkpoints. Ordinary installation selects its full BPF-capable build and persists
 optional coordination. It never starts QEMU or requires simulator files. See
 [continuous operation](SERVICE.md) for installation and validation boundaries.
 
@@ -173,8 +173,8 @@ energy savings or a better MPC policy.
 
 Direct daemon invocation defaults to rule control; fresh managed services
 default to independent MPC with rule fallback. Cross-cluster planning remains
-opt-in. Cooperative prediction is opt-in for standalone installations and the
-default when optional Lertick integration is explicitly selected. Plain upgrades
+opt-in. Cooperative prediction is selected independently from automatic optional
+Lertick discovery; new installs keep nominal MPC. Plain upgrades
 preserve saved choices. This selection is independent of peer connectivity and
 does not imply that Lertick improves predictions or that every correction runs.
 Contract discovery is enabled by default but is optional, and Lerwatt runs
@@ -326,8 +326,8 @@ Delivery is incremental:
 
 1. **Native deployment helper (implemented).** `deploy.sh` builds on the
    target and offers checks, preview, foreground trials and service management.
-   Its independent BPF-free binary avoids modern BPF-header requirements;
-   `install --lertick` opts into the full build and ABI 2 coordination. Default install
+   An explicit BPF-free binary remains available; ordinary installation uses
+   the full build and automatic ABI 2 discovery. Default install
    enables/starts its own persistent systemd unit after checking hardware and
    known control conflicts. Other managers are not stopped automatically.
    `install-tools` keeps a service-free path for other init systems;
