@@ -104,8 +104,15 @@ is the new point-forecast default for MPC. The default control policy is still
 rule. No point forecast changes ceilings, floors, planning or safety limits.
 
 Real daemon/file-ABI confirmation is required separately from these simulator
-module scores; no real-board accuracy is claimed. The runtime harness retains
-every temporary simulator tree and tests every original actuator restoration.
+module scores. Six sequential 20-minute cases completed with mean MAE
+1.473849 to 0.670985 C (-54.47%) and mean RMSE 1.819386 to 0.948024 C
+(-47.89%). No selected case regressed. Random and sparse loads retain the
+reference exactly; the step-load MAE difference is only 0.00118 C. All cases
+restore all 30 actuator values, remove the journal and report zero throttling
+and invalid writes. These known input families confirm the actual daemon
+path, rather than adding six unseen workload families. The [runtime report](runtime/README.md)
+retains the collector failures, explicit case selection and raw hashes.
+No real-board accuracy is claimed.
 
 ## Reproduction
 
@@ -121,7 +128,7 @@ sudo python3 tests/verify_runtime_forecast.py --output /var/tmp/lerwatt-runtime-
 post-freeze stale-feedback check changes no perfectly sampled score; integrated
 results match all original scores exactly. The 10 ms peak reporting audit also
 changes no predictor or control outcome. Both original and audited reports
-are retained. The three scoring fixtures verify nanosecond alignment, delayed
+are retained. The scoring fixtures verify nanosecond alignment, delayed
 labels, rejection of inconsistent corrections and late-label handling.
 
 Rejected prototype sources were captured against the reference revision and

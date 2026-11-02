@@ -1,0 +1,2 @@
+lerwatt-sim: rk3588 at /var/tmp/lerwatt-temporal-runtime-ec5a696/sparse31-fan-35C/root, cooling fan, ambient 35.0 C, load trace:/var/tmp/lerwatt-temporal-runtime-ec5a696/sparse31-fan-35C/load.txt, tick 10 ms
+lerwatt-sim: 1200.0 s simulated in 1200.1 s: energy 4027.5 J (mean 3.36 W), work served 77.2%, 0 throttle steps, peak 43.5 / 43.5 / 40.7 C (big0 / big1 / little), 0 bad writes

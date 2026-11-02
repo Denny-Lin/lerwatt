@@ -1,0 +1,7 @@
+{
+  "archive": "all-runtime-attempts.tgz",
+  "sha256": "b7d999f0ba07ce23ea2c14c4841ec95d770e54650a1682f9674c476fde960ae2",
+  "bytes": 9087321,
+  "all_attempts_preserved": true,
+  "retention": "Full raw archive remains outside Git; original guest attempts also retained."
+}

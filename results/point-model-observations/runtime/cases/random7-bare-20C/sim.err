@@ -1,0 +1,2 @@
+lerwatt-sim: rk3588 at /var/tmp/lerwatt-temporal-runtime-ec5a696/random7-bare-20C/root, cooling bare, ambient 20.0 C, load trace:/var/tmp/lerwatt-temporal-runtime-ec5a696/random7-bare-20C/load.txt, tick 10 ms
+lerwatt-sim: 1199.5 s simulated in 1200.1 s: energy 8587.0 J (mean 7.16 W), work served 78.0%, 0 throttle steps, peak 81.3 / 81.3 / 81.3 C (big0 / big1 / little), 0 bad writes

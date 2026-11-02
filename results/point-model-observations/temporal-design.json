@@ -57,5 +57,25 @@
     "restoration": "all original knobs, no journal left",
     "simulation": "no critical trip, throttle steps or invalid writes",
     "scope": "actual daemon/file ABI on one simulated board; no hardware or throughput claim"
+  },
+  "runtime_outcome": {
+    "complete_cases": 6,
+    "passed_frozen_accuracy_gate": true,
+    "macro": {
+      "mae_c": {
+        "baseline": 1.4738494309531225,
+        "candidate": 0.6709853171106764,
+        "change_percent": -54.4739575821692
+      },
+      "rmse_c": {
+        "baseline": 1.8193860609506052,
+        "candidate": 0.9480235789686673,
+        "change_percent": -47.89321522704546
+      }
+    },
+    "source_manifest": "runtime/cases/environment.json",
+    "failures_preserved": "runtime/retained-failures",
+    "raw_archive_manifest": "runtime/archives.json",
+    "predictor_parameters_changed_after_confirmation": false
   }
 }

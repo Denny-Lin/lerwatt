@@ -312,6 +312,17 @@ rejected models, all scores, source freeze and telemetry semantics.
 `forecast_weights` describes the reference; `forecast_correction_c` is the
 additional residual, and `forecast_source: temporal` marks its selection.
 
+Six sequential 20-minute runs through the real daemon and simulated file ABI
+pass the predeclared runtime gate: equal-profile mean MAE 1.473849 to
+0.670985 C (-54.47%) and RMSE 1.819386 to 0.948024 C (-47.89%), with no
+case regression. Random and sparse loads keep the reference exactly; steps
+are nearly unchanged. All 30 actuator values are restored in every case,
+with zero throttling or invalid writes. These previously evaluated input
+families confirm integration and live timing, not unseen-family or hardware
+accuracy. The [runtime report](../results/point-model-observations/runtime/README.md)
+preserves both interrupted/failed collector attempts, the corrected
+integer-valued restoration check, full case records and raw-data hashes.
+
 ## 5. Calibration, when the board arrives
 
 1. Idle the board at a fixed ambient: measure base power and idle temperatures.

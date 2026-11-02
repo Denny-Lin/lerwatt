@@ -1,0 +1,2 @@
+lerwatt-sim: rk3588 at /var/tmp/lerwatt-temporal-runtime-081baec/sine11-fan-15C/root, cooling fan, ambient 15.0 C, load trace:/var/tmp/lerwatt-temporal-runtime-081baec/sine11-fan-15C/load.txt, tick 10 ms
+lerwatt-sim: 1199.3 s simulated in 1200.3 s: energy 8194.6 J (mean 6.83 W), work served 79.6%, 0 throttle steps, peak 32.4 / 32.4 / 31.5 C (big0 / big1 / little), 0 bad writes
