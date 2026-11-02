@@ -1,5 +1,12 @@
 # Working on Lerwatt
 
+Keep root Markdown limited to the product `README.md` and these agent
+instructions. Use [docs/README.md](docs/README.md) as the documentation index;
+guides belong in `docs/` and experimental evidence in `results/`. Keep GitHub
+community policies in `.github/` if introduced. Preserve the root license and
+update all relative links when moving documents. Historical raw evidence
+retains its original contents.
+
 Keep native Linux deployment usable. Build as the normal user; never build or
 download dependencies as root. Preserve journal recovery, single-controller
 locking, watchdog progress from successful control cycles, and kernel/firmware

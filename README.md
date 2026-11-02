@@ -133,6 +133,8 @@ Physical energy savings, battery life and throughput gains remain unmeasured. Pr
 
 ## Go further
 
+**[Browse all documentation →](docs/README.md)**
+
 | I want to… | Start here |
 | --- | --- |
 | Configure continuous operation or understand the watchdog | [Persistent service](docs/SERVICE.md) |
