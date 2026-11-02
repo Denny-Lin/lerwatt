@@ -30,9 +30,11 @@ averages or confidence intervals.
 
 **Physical power savings, battery life and application throughput remain
 unmeasured.** The original `nominal` prediction path keeps point forecasts separate from CPU
-limits. An experimental, opt-in cooperative predictor can now tighten five-second
-MPC decisions within a validated action context; small finite-job regressions
-keep it disabled by default. [Implementation and limits](docs/COOPERATIVE_PREDICTION.md). A separate 192-run simulator-module study reduced mean forecast MAE by
+limits. An experimental cooperative predictor can tighten five-second MPC
+decisions within a validated action context. Standalone installs keep nominal
+MPC by default; explicitly selecting `install --lertick` defaults to cooperative
+prediction. Enabled does not mean every correction is applied, nor that Lertick
+improves accuracy. Small finite-job regressions remain recorded. [Implementation and limits](docs/COOPERATIVE_PREDICTION.md). A separate 192-run simulator-module study reduced mean forecast MAE by
 28.95–29.51%, with a small worst-profile regression; it uses a different dataset.
 [Module results →](results/point-model-observations/README.md)
 
@@ -135,7 +137,7 @@ flowchart LR
 
 The thermal model learns online; rule control covers warm-up and fallback. The service saves compatible learned thermal parameters every five minutes and on normal shutdown, then reuses them after restart. Fresh learning usually needs at least about 90 seconds of suitable observations. A preview does not pretrain the service; control history and unfinished forecasts are always refreshed.
 
-Linux continues handling frequency transitions, idle-state selection and thermal protection. Learned planning sets CPU frequency ceilings; frequency floors and PM QoS idle-latency constraints currently use rules. The separate five-second point forecast is reported in telemetry; it does not drive control decisions. [Architecture and expansion →](docs/DESIGN.md)
+Linux continues handling frequency transitions, idle-state selection and thermal protection. Learned planning sets CPU frequency ceilings; frequency floors and PM QoS idle-latency constraints currently use rules. The five-second point forecast is reported in telemetry; cooperative mode can also use supported, reliable predictions in MPC decisions. [Architecture and expansion →](docs/DESIGN.md)
 
 ## Works with Lertick
 

@@ -33,6 +33,9 @@ install also accepts --policy, --prediction, --period-ms, --soft-limit and
   --lertick                 Enable optional Lertick coordination (BPF build).
   --no-lertick              Disable coordination (default for a new install).
 An upgrade preserves its existing coordination setting unless overridden.
+Explicit --lertick defaults to cooperative prediction; --no-lertick defaults
+to nominal. An explicit --prediction overrides either choice, in any order.
+Without these flags, upgrades preserve the saved prediction mode.
 Coordination requires a control period of 10..100 ms (default 100 ms).
 
 The service runs continuously, starts at boot and restarts after failures.
@@ -203,9 +206,10 @@ become_root()
 {
     if [ "$(id -u)" -ne 0 ]; then
         command -v sudo >/dev/null 2>&1 || fail 'sudo is unavailable; build first then invoke as root'
-        if [ "$command" = install ]; then
-            case $install_contract in auto) set -- "$@" --lertick ;; off) set -- "$@" --no-lertick ;; esac
-        fi
+        # Preserve the actual CLI: synthesizing --lertick/--no-lertick from
+        # saved configuration would incorrectly apply a new prediction default
+        # on plain upgrade. The privileged reentry validates the config again
+        # and checks the selected binary's capabilities before stopping service.
         exec sudo env PREFIX="$prefix" DESTDIR="$destdir" "$script" "$command" "$@"
     fi
 }
@@ -277,26 +281,34 @@ validate_service_mode()
 }
 service_overrides()
 {
+    prediction_override=no; prediction_default=
     while [ "$#" -gt 0 ]; do
         case $1 in
-            --lertick) service_contract=auto; shift; continue ;;
-            --no-lertick) service_contract=off; shift; continue ;;
+            --lertick) service_contract=auto; prediction_default=cooperative; shift; continue ;;
+            --no-lertick) service_contract=off; prediction_default=nominal; shift; continue ;;
         esac
         case $1 in *=*) option=${1%%=*}; value=${1#*=}; shift ;; *) option=$1; value=$2; shift 2 ;; esac
         case $option in
             --policy) service_policy=$value ;;
-            --prediction) service_prediction=$value ;;
+            --prediction) service_prediction=$value; prediction_override=yes ;;
             --period-ms) service_period=$value ;;
             --soft-limit) service_soft=$value ;;
             --temperature-sensor) service_sensor=$value ;;
         esac
     done
+    # Only an explicit installation-mode selection changes the default.
+    # A detected/running peer never selects a model, and plain upgrades keep
+    # saved choices (including explicit opt-outs and legacy nominal configs).
+    if [ "$prediction_override" = no ] && [ -n "$prediction_default" ]; then
+        service_prediction=$prediction_default
+    fi
     validate_service_mode
 }
 select_install_contract()
 {
     # Configuration is root-private. Read only its strictly validated mode,
-    # before the normal user's build, and carry that choice across sudo.
+    # before the normal user's build. The privileged reentry reads it again;
+    # a stored choice must not become an explicit installation-mode override.
     if [ -z "$install_contract" ]; then
         if [ "$(id -u)" -eq 0 ]; then
             load_service_config
@@ -395,6 +407,7 @@ case $command in
     status)
         require_systemd; become_root; load_service_config
         printf 'Lertick coordination configured: %s (connection state is reported in lerwatt logs).\n' "$service_contract"
+        printf 'Prediction mode configured: %s (reliability checks gate individual corrections).\n' "$service_prediction"
         systemctl is-enabled lerwatt.service || :
         exec systemctl status lerwatt.service --no-pager ;;
     start|stop|restart|logs)

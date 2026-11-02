@@ -1,0 +1,86 @@
+test_deploy: upgrade lost prediction setting
+MODE help
+ARG --help
+SYSTEMCTL list-units --no-pager --no-legend
+SYSTEMCTL is-active --quiet tlp.service
+SYSTEMCTL is-active --quiet auto-cpufreq.service
+SYSTEMCTL is-active --quiet tuned.service
+SYSTEMCTL is-active --quiet power-profiles-daemon.service
+MODE run
+ARG --sysroot
+ARG /
+ARG --policy
+ARG mpc
+ARG --prediction
+ARG cooperative
+ARG --period-ms
+ARG 100
+ARG --no-contract
+ARG --soft-limit
+ARG 72.5
+ARG --temperature-sensor
+ARG /sys/class/thermal/thermal_zone0/temp
+ARG --duration
+ARG 0
+ARG --watchdog
+ARG --model-state
+ARG /private/var/folders/9p/9064vwzx0p52hm1gx3qgwn_00000gn/T/lerwatt-deploy-test.etMssE/host/var/lib/lerwatt/model.state
+SUDO
+BUILD
+BUILD_TARGET build/lerwattd-standalone
+MODE help
+ARG --help
+SUDO
+MODE help
+ARG --help
+SYSTEMCTL list-units --no-pager --no-legend
+SYSTEMCTL show lerwatt.service --property FragmentPath --value
+SYSTEMCTL show lerwatt.service --property DropInPaths --value
+SYSTEMCTL is-active --quiet tlp.service
+SYSTEMCTL is-active --quiet auto-cpufreq.service
+SYSTEMCTL is-active --quiet tuned.service
+SYSTEMCTL is-active --quiet power-profiles-daemon.service
+MODE check
+ARG --sysroot
+ARG /
+ARG --no-contract
+ARG --policy
+ARG mpc
+ARG --prediction
+ARG nominal
+ARG --period-ms
+ARG 100
+ARG --soft-limit
+ARG 72.5
+ARG --temperature-sensor
+ARG /sys/class/thermal/thermal_zone0/temp
+ARG --check
+SYSTEMCTL stop lerwatt.service
+MODE restore
+ARG --sysroot
+ARG /
+ARG --no-contract
+ARG --restore
+ARG --
+ARG /private/var/folders/9p/9064vwzx0p52hm1gx3qgwn_00000gn/T/lerwatt-deploy-test.etMssE/source tree/deploy.sh
+ARG install-locked
+ARG --policy
+ARG mpc
+ARG --prediction
+ARG nominal
+ARG --period-ms
+ARG 100
+ARG --soft-limit
+ARG 72.5
+ARG --temperature-sensor
+ARG /sys/class/thermal/thermal_zone0/temp
+ARG --no-lertick
+MAINTENANCE BEGIN
+MODE help
+ARG --help
+SYSTEMCTL show lerwatt.service --property FragmentPath --value
+SYSTEMCTL show lerwatt.service --property DropInPaths --value
+MAINTENANCE END
+SYSTEMCTL daemon-reload
+SYSTEMCTL enable --now lerwatt.service
+SYSTEMCTL is-active --quiet lerwatt.service

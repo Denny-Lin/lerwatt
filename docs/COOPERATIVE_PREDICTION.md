@@ -7,10 +7,17 @@ implementation. MPC still selects frequency ceilings. The shared predictor
 owns the existing RLS thermal model, delayed-feedback expert blend and temporal
 LMS correction. There is no learned action-selection policy.
 
-The default prediction mode remains `nominal`, including managed-service
-upgrades. CLI policy defaults to rule; a new managed service defaults to MPC.
-Cooperative mode is experimental: the finite-job comparison detected small
-regressions, and no hardware energy benefit has been measured.
+New standalone service installations default to independent MPC with `nominal`
+prediction. Explicit `./deploy.sh install --lertick` defaults to `cooperative`;
+`--no-lertick` defaults back to `nominal`. An explicit `--prediction` overrides
+either selection regardless of argument order. Plain upgrades preserve saved
+choices, including nominal opt-outs and legacy configs without a prediction key.
+Raw daemon CLI defaults remain rule/nominal. Cooperative mode is experimental:
+the finite-job comparison detected small regressions, and no hardware energy
+benefit has been measured. The integrated default is a deployment choice, not
+evidence that installing Lertick improves temperature predictions.
+The [installation-default validation](../results/cooperative-activation/README.md)
+records both modes and preserves the original performance regressions.
 
 ## Architecture and replacement boundary
 
@@ -112,14 +119,21 @@ On a supported, authorized Linux test machine, inspect first:
 ./deploy.sh run --policy mpc --prediction cooperative --duration 300
 # Persistent opt-in, after validation on the target machine:
 ./deploy.sh install --policy mpc --prediction cooperative --period-ms 100
+# Explicit optional integration defaults to cooperative prediction:
+./deploy.sh install --lertick
+# Keep coordination but explicitly use original MPC predictions:
+./deploy.sh install --lertick --prediction nominal
 # Return to the original prediction path, preserving the selected policy:
 ./deploy.sh install --prediction nominal
 ```
 
 Cooperative mode requires temporal forecasts, MPC and a 10–100 ms period.
 Service configuration persists `prediction=nominal|cooperative`; old configs
-without the key retain nominal mode. Changing the mode invalidates the old
-mode's checkpoint fingerprint. Only compatible long-term RLS parameters are
+without the key retain nominal mode on plain upgrade. Reselecting `--lertick`
+applies its cooperative default unless `--prediction` is supplied too. Existing
+rule-policy or slow-period settings are not silently replaced: select MPC and
+a supported period or explicitly use nominal prediction. Changing the mode
+invalidates the old mode's checkpoint fingerprint. Only compatible long-term RLS parameters are
 persisted; control-validation queues, recent history and forecast weights start
 fresh. The built-in checkpoint rejects private replacement backends, which
 need their own explicitly versioned persistence support.
@@ -132,7 +146,12 @@ while `forecast_c` retains its expected-sensor meaning.
 
 The Lertick ABI, ownership, freshness and lifecycle are unchanged. Models remain
 private to Lerwatt; replacing this predictor does not require retraining or
-restarting the scheduler.
+restarting the scheduler. Peer absence, startup or restart never changes the
+configured prediction mode. **Enabled does not mean applied:** every correction
+must still pass action, horizon, freshness and reliability checks. Rejected
+corrections use nominal MPC predictions; an unavailable/invalid required model
+retains rule fallback. Neither deployment selection nor peer connectivity
+bypasses these checks.
 
 ## Further work is evidence-gated
 
