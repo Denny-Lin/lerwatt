@@ -60,6 +60,7 @@ test: $(BUILD)/test_model $(BUILD)/test_learn $(BUILD)/test_forecast $(BUILD)/te
 	$(BUILD)/test_forecast_feedback
 	$(BUILD)/test_temporal
 	python3 tests/test_runtime_forecast.py
+	python3 tests/test_runtime_summary.py
 	$(BUILD)/test_control_forecast --temporal --integrated --development
 	$(BUILD)/test_controller
 	$(BUILD)/test_closed_loop
