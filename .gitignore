@@ -3,3 +3,5 @@ build/
 *.skel.h
 vmlinux.h
 results/local/
+__pycache__/
+*.pyc
