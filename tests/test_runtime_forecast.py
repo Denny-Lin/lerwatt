@@ -36,6 +36,22 @@ class RuntimeForecastScoring(unittest.TestCase):
             }]})
         return rows
 
+    def test_restoration_compares_integer_values_without_hiding_changes(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            path = root / "sys/devices/system/cpu/cpufreq/policy0/scaling_max_freq"
+            path.parent.mkdir(parents=True)
+            path.write_text("2400000\n")
+            original = knobs(root)
+            path.write_text("2400000")
+            self.assertEqual(knobs(root), original)
+            path.write_text("1800000\n")
+            self.assertNotEqual(knobs(root), original)
+            for invalid in ("", "2400000 garbage", "2400000\n1800000", "nan"):
+                path.write_text(invalid)
+                with self.assertRaisesRegex(ValueError, "invalid integer"):
+                    knobs(root)
+
     def evaluate(self, rows, warmup=5):
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "telemetry.jsonl"

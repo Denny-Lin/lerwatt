@@ -116,8 +116,17 @@ def score(path, warmup=300):
 
 def knobs(root):
     names = {"scaling_min_freq", "scaling_max_freq", "disable", "pm_qos_resume_latency_us"}
-    return {str(p.relative_to(root)): p.read_text() for p in (root / "sys/devices/system/cpu").rglob("*")
-            if p.is_file() and p.name in names}
+    snapshot = {}
+    for p in (root / "sys/devices/system/cpu").rglob("*"):
+        if not p.is_file() or p.name not in names:
+            continue
+        value = p.read_text().strip()
+        if not re.fullmatch(r"-?[0-9]+", value):
+            raise ValueError(f"invalid integer actuator value: {p}")
+        # Real sysfs reports a trailing newline regardless of the write.
+        # The simulator's regular files preserve the writer's formatting.
+        snapshot[str(p.relative_to(root))] = str(int(value))
+    return snapshot
 
 
 def stop(process):
