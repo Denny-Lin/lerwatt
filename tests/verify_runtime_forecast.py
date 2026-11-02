@@ -177,6 +177,9 @@ def run_case(output, name, duration, warmup):
             if sim.poll() is not None:
                 raise RuntimeError("simulator ended before daemon; see sim.err")
             evidence["restored_knobs"] = True
+            # Stop the load as soon as the controller has restored its knobs.
+            # Offline JSON scoring must not extend the uncontrolled hot tail.
+            stop(sim)
             result = score(directory / "telemetry.jsonl", warmup)
             if kind in ("periodic", "sine", "phase") and not result["temporal_active_points"]:
                 raise RuntimeError("temporal correction never activated on a periodic confirmation case")
