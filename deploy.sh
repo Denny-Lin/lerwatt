@@ -30,6 +30,10 @@ check, preview and run accept:
   --temperature-sensor PATH  --telemetry FILE
 install also accepts --policy, --period-ms, --soft-limit and
 --temperature-sensor to configure the persistent service.
+  --lertick                 Enable optional Lertick coordination (BPF build).
+  --no-lertick              Disable coordination (default for a new install).
+An upgrade preserves its existing coordination setting unless overridden.
+Coordination requires a control period of 10..100 ms (default 100 ms).
 
 The service runs continuously, starts at boot and restarts after failures.
 An independent systemd watchdog stops an unresponsive worker; ExecStopPost
@@ -63,10 +67,11 @@ config=$config_dir/lerwatt.conf
 state_dir=/var/lib/lerwatt
 service_marker="# Managed by Lerwatt deployment: $prefix"
 command=${1:-help}
+install_contract=
 if [ "$#" -gt 0 ]; then shift; fi
 case $command in
     help|--help|-h) usage; exit 0 ;;
-    check|preview|run|restore|install|install-tools|uninstall|status|start|stop|restart|logs|install-locked|install-tools-locked|uninstall-locked|service-run|service-restore|service-check) ;;
+    check|preview|run|restore|install|install-tools|uninstall|status|start|stop|restart|logs|install-locked|install-tools-locked|uninstall-locked|service-run|service-restore|service-check|config-contract) ;;
     *) usage >&2; fail "unknown command: $command" ;;
 esac
 validate_path()
@@ -123,12 +128,17 @@ validate_options()
 {
     while [ "$#" -gt 0 ]; do
         case $1 in
+            --lertick|--no-lertick)
+                case $command in install|install-locked) ;; *) fail "$1 is for persistent installation only" ;; esac
+                case $1 in --lertick) value=auto ;; *) value=off ;; esac
+                [ -z "$install_contract" ] || [ "$install_contract" = "$value" ] || fail 'choose only one of --lertick and --no-lertick'
+                install_contract=$value; shift; continue ;;
             --policy|--duration|--period-ms|--soft-limit|--temperature-sensor|--telemetry)
                 [ "$#" -ge 2 ] || fail "$1 needs a value"
                 option=$1; value=$2; shift 2 ;;
             --policy=*|--duration=*|--period-ms=*|--soft-limit=*|--temperature-sensor=*|--telemetry=*)
                 option=${1%%=*}; value=${1#*=}; shift ;;
-            *) fail "unsupported option: $1 (hardware root and standalone mode are fixed)" ;;
+            *) fail "unsupported option: $1 (hardware root is fixed)" ;;
         esac
         if [ "$command" = install ] || [ "$command" = install-locked ]; then
             case $option in --duration|--telemetry) fail "$option is for foreground trials only" ;; esac
@@ -165,11 +175,21 @@ trusted_installation() { trusted_root_path "$1/bin"; trusted_root_path "$1/sbin"
 ensure_daemon()
 {
     if [ "$source_tree" = yes ]; then
+        build_target=build/lerwattd-standalone
+        case $command in install|install-locked)
+            if [ "$install_contract" = auto ]; then build_target=build/lerwattd; fi ;;
+        esac
+        daemon=$tool_dir/$build_target
         if [ "$(id -u)" -ne 0 ]; then
             command -v make >/dev/null 2>&1 || fail 'install Make and a C11 compiler first'
-            make -C "$tool_dir" build/lerwattd-standalone || fail 'local build failed; installation was kept'
+            if ! make -C "$tool_dir" "$build_target"; then
+                if [ "$install_contract" = auto ]; then
+                    fail 'BPF-enabled build failed; usable Linux userspace BPF headers are required (Ubuntu: linux-libc-dev); installation was kept'
+                fi
+                fail 'local build failed; installation was kept'
+            fi
         elif [ ! -x "$daemon" ]; then
-            fail 'build as your normal user first: make hardware'
+            fail "build as your normal user first: make $build_target"
         fi
     fi
     [ -f "$daemon" ] && [ -x "$daemon" ] && [ ! -L "$daemon" ] || fail "daemon not found: $daemon"
@@ -182,6 +202,9 @@ become_root()
 {
     if [ "$(id -u)" -ne 0 ]; then
         command -v sudo >/dev/null 2>&1 || fail 'sudo is unavailable; build first then invoke as root'
+        if [ "$command" = install ]; then
+            case $install_contract in auto) set -- "$@" --lertick ;; off) set -- "$@" --no-lertick ;; esac
+        fi
         exec sudo env PREFIX="$prefix" DESTDIR="$destdir" "$script" "$command" "$@"
     fi
 }
@@ -219,7 +242,7 @@ check_competing_services()
 }
 load_service_config()
 {
-    service_policy=mpc; service_period=100; service_soft=auto; service_sensor=auto
+    service_policy=mpc; service_period=100; service_soft=auto; service_sensor=auto; service_contract=off
     if [ -e "$config" ] || [ -L "$config" ]; then
         trusted_root_path "$config"
         [ -f "$config" ] && [ ! -L "$config" ] || fail 'service config must be a regular file'
@@ -233,14 +256,26 @@ load_service_config()
                 period_ms) validate_value --period-ms "$value"; service_period=$value ;;
                 soft_limit_c) if [ "$value" != auto ]; then validate_value --soft-limit "$value"; fi; service_soft=$value ;;
                 temperature_sensor) if [ "$value" != auto ]; then validate_value --temperature-sensor "$value"; fi; service_sensor=$value ;;
+                contract) case $value in off|auto) service_contract=$value ;; *) fail 'contract must be off or auto' ;; esac ;;
                 *) fail "unknown service config key: $key" ;;
             esac
         done < "$config"
+    fi
+    validate_service_mode
+}
+validate_service_mode()
+{
+    if [ "$service_contract" = auto ]; then
+        [ "$service_period" -le 100 ] || fail 'Lertick coordination requires period_ms=10..100; choose --period-ms 100 or disable coordination'
     fi
 }
 service_overrides()
 {
     while [ "$#" -gt 0 ]; do
+        case $1 in
+            --lertick) service_contract=auto; shift; continue ;;
+            --no-lertick) service_contract=off; shift; continue ;;
+        esac
         case $1 in *=*) option=${1%%=*}; value=${1#*=}; shift ;; *) option=$1; value=$2; shift 2 ;; esac
         case $option in
             --policy) service_policy=$value ;;
@@ -249,6 +284,29 @@ service_overrides()
             --temperature-sensor) service_sensor=$value ;;
         esac
     done
+    validate_service_mode
+}
+select_install_contract()
+{
+    # Configuration is root-private. Read only its strictly validated mode,
+    # before the normal user's build, and carry that choice across sudo.
+    if [ -z "$install_contract" ]; then
+        if [ "$(id -u)" -eq 0 ]; then
+            load_service_config
+            install_contract=$service_contract
+        else
+            command -v sudo >/dev/null 2>&1 || fail 'sudo is unavailable; cannot read the existing service configuration'
+            install_contract=$(sudo env PREFIX="$prefix" DESTDIR= "$script" config-contract) || fail 'cannot read the existing service configuration; installation was kept'
+        fi
+    fi
+    case $install_contract in off|auto) ;; *) fail 'invalid coordination mode from service configuration' ;; esac
+}
+require_contract_capability()
+{
+    if [ "$service_contract" = auto ]; then
+        build_features=$("$daemon" --build-features) || fail 'cannot inspect daemon build capabilities; rebuild from the trusted checkout'
+        [ "$build_features" = contract=bpf ] || fail 'Lertick coordination requires the BPF-enabled daemon; run ./deploy.sh install --lertick from the trusted checkout'
+    fi
 }
 write_service_files()
 {
@@ -258,8 +316,8 @@ write_service_files()
     chmod 700 "$config_dir" "$state_dir"
     trusted_root_path "$config_dir"; trusted_root_path "$state_dir"
     config_tmp=$(mktemp "$config_dir/.config.XXXXXX")
-    printf '# Lerwatt persistent service configuration. Strict KEY=VALUE; no shell syntax.\npolicy=%s\nperiod_ms=%s\nsoft_limit_c=%s\ntemperature_sensor=%s\n' \
-        "$service_policy" "$service_period" "$service_soft" "$service_sensor" > "$config_tmp"
+    printf '# Lerwatt persistent service configuration. Strict KEY=VALUE; no shell syntax.\npolicy=%s\nperiod_ms=%s\nsoft_limit_c=%s\ntemperature_sensor=%s\ncontract=%s\n' \
+        "$service_policy" "$service_period" "$service_soft" "$service_sensor" "$service_contract" > "$config_tmp"
     chmod 600 "$config_tmp"
     mv -f "$config_tmp" "$config"
     # Escape unit quoting and percent specifiers. The executable token is
@@ -322,8 +380,14 @@ maintenance()
     fi
 }
 case $command in
+    config-contract)
+        [ "$(id -u)" -eq 0 ] && [ -z "$destdir" ] || fail 'configuration inspection requires root and no DESTDIR'
+        load_service_config
+        printf '%s\n' "$service_contract"
+        exit 0 ;;
     status)
-        require_systemd
+        require_systemd; become_root; load_service_config
+        printf 'Lertick coordination configured: %s (connection state is reported in lerwatt logs).\n' "$service_contract"
         systemctl is-enabled lerwatt.service || :
         exec systemctl status lerwatt.service --no-pager ;;
     start|stop|restart|logs)
@@ -339,13 +403,16 @@ case $command in
         ensure_daemon
         if [ "$command" = service-restore ]; then exec "$daemon" --sysroot / --no-contract --restore; fi
         require_systemd; check_competing_services; load_service_config
-        set -- --sysroot / --no-contract --policy "$service_policy" --period-ms "$service_period"
+        require_contract_capability
+        set -- --sysroot / --policy "$service_policy" --period-ms "$service_period"
+        if [ "$service_contract" = off ]; then set -- "$@" --no-contract; fi
         if [ "$service_soft" != auto ]; then set -- "$@" --soft-limit "$service_soft"; fi
         if [ "$service_sensor" != auto ]; then set -- "$@" --temperature-sensor "$service_sensor"; fi
         if [ "$command" = service-check ]; then exec "$daemon" "$@" --check; fi
         exec "$daemon" "$@" --duration 0 --watchdog --model-state "$state_dir/model.state" ;;
     install|install-tools|uninstall)
         if [ -z "$destdir" ]; then
+            if [ "$command" = install ]; then select_install_contract; fi
             if [ "$command" = uninstall ] && [ -x "$prefix/sbin/lerwattd" ]; then
                 daemon=$prefix/sbin/lerwattd
             else
@@ -356,12 +423,15 @@ case $command in
             if [ "$command" = install ]; then
                 require_systemd; check_service_slot; check_competing_services
                 load_service_config; service_overrides "$@"
+                service_contract=$install_contract
+                require_contract_capability
                 # Check requested inputs before stopping/replacing a running service.
                 set -- --policy "$service_policy" --period-ms "$service_period"
                 if [ "$service_soft" != auto ]; then set -- "$@" --soft-limit "$service_soft"; fi
                 if [ "$service_sensor" != auto ]; then set -- "$@" --temperature-sensor "$service_sensor"; fi
                 "$daemon" --sysroot / --no-contract "$@" --check || fail 'hardware check failed; service was not installed'
                 # Re-use the validated settings as explicit maintenance overrides.
+                case $service_contract in auto) set -- "$@" --lertick ;; off) set -- "$@" --no-lertick ;; esac
                 if owned_unit; then systemctl stop lerwatt.service || fail 'service did not stop; installation was kept'; fi
                 maintenance "$@"
                 systemctl daemon-reload
@@ -406,7 +476,7 @@ case $command in
         mv -f "$helper_tmp" "$target/bin/lerwatt"
         trap - 0
         if [ "$command" = install-locked ]; then
-            check_service_slot; load_service_config; service_overrides "$@"; write_service_files
+            check_service_slot; load_service_config; service_overrides "$@"; require_contract_capability; write_service_files
             printf 'Installed commands and the persistent service unit.\n'
         else
             printf 'Installed %s and %s; no service was started or enabled.\n' "$target/bin/lerwatt" "$target/sbin/lerwattd"

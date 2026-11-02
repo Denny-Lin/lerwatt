@@ -110,14 +110,21 @@ cat > "$tools/make" <<'EOF'
 #!/bin/sh
 printf 'BUILD\n' >> "$TEST_LOG"
 [ "${FAIL_BUILD:-0}" = 0 ] || exit 11
-[ "$1" = -C ] && [ "$3" = build/lerwattd-standalone ] || exit 12
+[ "$1" = -C ] || exit 12
+case $3 in
+    build/lerwattd-standalone) feature=none ;;
+    build/lerwattd) feature=bpf ;;
+    *) exit 12 ;;
+esac
+printf 'BUILD_TARGET %s\n' "$3" >> "$TEST_LOG"
 mkdir -p "$2/build"
-cp "$STUB_TEMPLATE" "$2/build/lerwattd-standalone"
-chmod 755 "$2/build/lerwattd-standalone"
+sed "s/^built_contract=none\$/built_contract=$feature/" "$STUB_TEMPLATE" > "$2/$3"
+chmod 755 "$2/$3"
 EOF
 cat > "$STUB_TEMPLATE" <<'EOF'
 #!/bin/sh
 set -eu
+built_contract=none
 mode=run
 for arg do
     case $arg in
@@ -125,11 +132,13 @@ for arg do
         --restore) mode=restore ;;
         --dry-run) mode=preview ;;
         --help) mode=help ;;
+        --build-features) mode=features ;;
     esac
 done
 printf 'MODE %s\n' "$mode" >> "$TEST_LOG"
 for arg do printf 'ARG %s\n' "$arg" >> "$TEST_LOG"; done
 case $mode in
+    features) printf 'contract=%s\n' "${FORCE_FEATURES:-$built_contract}"; exit 0 ;;
     check) exit "${CHECK_EXIT:-0}" ;;
     restore)
         [ "${RESTORE_EXIT:-0}" = 0 ] || exit "$RESTORE_EXIT"
@@ -455,6 +464,7 @@ has 'SYSTEMCTL enable --now lerwatt.service'
 grep -F -x 'policy=rule' "$SERVICE_CONFIG" >/dev/null || die 'policy override was not persisted'
 grep -F -x 'period_ms=250' "$SERVICE_CONFIG" >/dev/null || die 'period override was not persisted'
 grep -F -x 'soft_limit_c=72.5' "$SERVICE_CONFIG" >/dev/null || die 'soft limit was not persisted'
+grep -F -x 'contract=off' "$SERVICE_CONFIG" >/dev/null || die 'new installation unexpectedly enabled coordination'
 grep -F -x 'Type=notify' "$SERVICE_UNIT_PATH" >/dev/null || die 'notify service type missing'
 grep -F -x 'WatchdogSec=30s' "$SERVICE_UNIT_PATH" >/dev/null || die 'independent watchdog missing'
 grep -F -x 'TimeoutAbortSec=15s' "$SERVICE_UNIT_PATH" >/dev/null || die 'watchdog abort timeout is unbounded'
@@ -474,6 +484,7 @@ FAKE_UID=0 PREFIX="$service_prefix" "$service_prefix/bin/lerwatt" service-run > 
 has 'MODE run'; has 'ARG --watchdog'; has 'ARG --model-state'; has 'ARG --duration'; has 'ARG 0'
 has "ARG $host/var/lib/lerwatt/model.state"
 has 'ARG rule'; has 'ARG 250'; has 'ARG 72.5'
+has 'ARG --no-contract'
 lacks 'ARG --telemetry'; lacks 'MODE restore'
 reset_log
 FAKE_UID=0 PREFIX="$service_prefix" "$service_prefix/bin/lerwatt" service-check > "$tmp/output" 2>&1
@@ -481,6 +492,64 @@ has 'MODE check'; lacks 'ARG --watchdog'; lacks 'ARG --model-state'
 reset_log
 FAKE_UID=0 PREFIX="$service_prefix" "$service_prefix/bin/lerwatt" service-restore > "$tmp/output" 2>&1
 has 'MODE restore'
+
+# Optional coordination chooses a BPF-enabled build before replacing the
+# service, persists across a plain upgrade, and can be explicitly disabled.
+reset_log
+expect_status 1 env PREFIX="$service_prefix" "$fixture/deploy.sh" install --lertick
+lacks 'SYSTEMCTL stop lerwatt.service'; lacks 'MAINTENANCE BEGIN'
+reset_log
+PREFIX="$service_prefix" "$fixture/deploy.sh" install --lertick --period-ms 100 > "$tmp/output" 2>&1
+has 'BUILD_TARGET build/lerwattd'
+grep -F -x 'contract=auto' "$SERVICE_CONFIG" >/dev/null || die 'coordination opt-in was not persisted'
+reset_log
+FAKE_UID=0 "$service_prefix/bin/lerwatt" service-run > "$tmp/output" 2>&1
+has 'MODE features'; has 'MODE run'; lacks 'ARG --no-contract'
+reset_log
+PREFIX="$service_prefix" "$fixture/deploy.sh" install > "$tmp/output" 2>&1
+has 'BUILD_TARGET build/lerwattd'
+grep -F -x 'contract=auto' "$SERVICE_CONFIG" >/dev/null || die 'plain upgrade disabled coordination'
+reset_log
+FAKE_UID=0 "$service_prefix/bin/lerwatt" status > "$tmp/output" 2>&1
+grep -F 'Lertick coordination configured: auto' "$tmp/output" >/dev/null || die 'status omitted configured coordination mode'
+reset_log
+expect_status 1 env PREFIX="$service_prefix" FORCE_FEATURES=none "$fixture/deploy.sh" install --lertick
+lacks 'SYSTEMCTL stop lerwatt.service'; lacks 'MAINTENANCE BEGIN'
+reset_log
+expect_status 1 env PREFIX="$service_prefix" FAIL_BUILD=1 "$fixture/deploy.sh" install --lertick
+lacks 'SYSTEMCTL stop lerwatt.service'; lacks 'MAINTENANCE BEGIN'
+grep -F 'BPF-enabled build failed' "$tmp/output" >/dev/null || die 'BPF build failure lacks actionable diagnostic'
+reset_log
+PREFIX="$service_prefix" "$fixture/deploy.sh" install --no-lertick > "$tmp/output" 2>&1
+has 'BUILD_TARGET build/lerwattd-standalone'
+grep -F -x 'contract=off' "$SERVICE_CONFIG" >/dev/null || die 'coordination opt-out was not persisted'
+printf 'contract=auto\n' >> "$SERVICE_CONFIG"
+reset_log
+expect_status 1 env FAKE_UID=0 "$service_prefix/bin/lerwatt" service-run
+lacks 'MODE run'
+sed '$d' "$SERVICE_CONFIG" > "$tmp/config.clean"
+cp "$tmp/config.clean" "$SERVICE_CONFIG"
+cp "$SERVICE_CONFIG" "$tmp/contract-off.saved"
+printf 'contract=auto\nperiod_ms=250\n' >> "$SERVICE_CONFIG"
+reset_log
+expect_status 1 env FAKE_UID=0 "$service_prefix/bin/lerwatt" service-run
+lacks 'MODE run'
+reset_log
+expect_status 1 env PREFIX="$service_prefix" "$fixture/deploy.sh" install
+lacks BUILD; lacks 'SYSTEMCTL stop lerwatt.service'; lacks 'MAINTENANCE BEGIN'
+cp "$tmp/contract-off.saved" "$SERVICE_CONFIG"
+reset_log
+expect_status 1 "$fixture/deploy.sh" install --lertick --no-lertick
+lacks BUILD; lacks SUDO
+reset_log
+expect_status 1 "$fixture/deploy.sh" run --lertick
+lacks BUILD; lacks SUDO
+
+# Staging the optional build still never runs a daemon or sudo.
+reset_log
+PREFIX=/opt/lerwatt DESTDIR="$tmp/contract-stage" "$fixture/deploy.sh" install --lertick > "$tmp/output" 2>&1
+has 'BUILD_TARGET build/lerwattd'
+lacks SUDO; lacks 'MODE features'; lacks 'MODE help'; lacks 'MODE restore'
 
 # Never automatically disable a competing policy service or replace a foreign
 # unit/drop-in. Each refusal occurs before stopping the owned service.

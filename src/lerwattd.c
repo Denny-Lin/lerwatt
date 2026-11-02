@@ -31,9 +31,6 @@
 #define LERWATT_VERSION "source"
 #endif
 
-/* Lertick runs are finite: look for a new run every second, drop a silent one after 2 s. */
-#define CONTRACT_RETRY_NS 1000000000ull
-#define CONTRACT_STALE_NS 2000000000ull
 #define CHECKPOINT_INTERVAL_NS 300000000000ull
 
 static volatile sig_atomic_t stop;
@@ -65,6 +62,7 @@ static void usage(FILE *out)
 		"  --watchdog         supervised service mode; require systemd notify/watchdog environment\n"
 		"  --model-state FILE persist compatible learned thermal parameters (active control only)\n"
 		"  --version          print build version and exit\n"
+		"  --build-features   print compiled optional interface support and exit\n"
 		"  --restore          write back journaled original values and exit\n"
 		"                     optional: -- /absolute/program args (hold recovery lock)\n");
 }
@@ -177,6 +175,19 @@ static int32_t cluster_temp(const struct lw_system *sys, const struct lw_sample 
 	return t;
 }
 
+static uint64_t policy_topology_id(const struct lw_policy *policy)
+{
+	bool member[LW_MAX_CPUS] = { false };
+	uint64_t hash = lw_contract_topology_seed();
+
+	for (int i = 0; i < policy->ncpus; i++)
+		member[policy->cpus[i]] = true;
+	for (int cpu = 0; cpu < LW_MAX_CPUS; cpu++)
+		if (member[cpu])
+			hash = lw_contract_topology_add_cpu(hash, (uint32_t)cpu);
+	return lw_contract_topology_finish(hash, (uint32_t)policy->ncpus);
+}
+
 static int sleep_until(uint64_t deadline_ns)
 {
 	struct timespec ts = {
@@ -230,6 +241,7 @@ int main(int argc, char **argv)
 		{ "watchdog", no_argument, NULL, 'W' },
 		{ "model-state", required_argument, NULL, 'M' },
 		{ "version", no_argument, NULL, 'V' },
+		{ "build-features", no_argument, NULL, 'B' },
 		{ "restore", no_argument, NULL, 'R' },
 		{ "help", no_argument, NULL, 'h' },
 		{ 0 }
@@ -261,6 +273,8 @@ int main(int argc, char **argv)
 	int lock_fd = -1;
 	bool have_contract = false;
 	uint64_t contract_next_try = 0;
+	uint64_t topology_ids[LW_CONTRACT_MAX_CLUSTERS] = { 0 };
+	int previous_matches = -1;
 	enum lw_ctl_policy policy = LW_POLICY_RULE;
 	double est_w[LW_MAX_POLICIES] = { 0 };
 
@@ -309,6 +323,13 @@ int main(int argc, char **argv)
 		case 'W': watchdog = true; break;
 		case 'M': model_path = optarg; break;
 		case 'V': printf("lerwattd %s\n", LERWATT_VERSION); return 0;
+		case 'B':
+#if defined(__linux__) && !defined(LW_NO_BPF)
+			puts("contract=bpf");
+#else
+			puts("contract=none");
+#endif
+			return 0;
 		case 'R': restore = true; break;
 		case 'h': usage(stdout); return 0;
 		default: usage(stderr); return 1;
@@ -400,6 +421,13 @@ int main(int argc, char **argv)
 			sys.npolicies);
 		use_contract = false;
 	}
+	if (use_contract && period_ms > 100) {
+		fprintf(stderr, "lerwatt: control period exceeds the contract's 100 ms cadence; running standalone\n");
+		use_contract = false;
+	}
+	if (use_contract)
+		for (int i = 0; i < sys.npolicies; i++)
+			topology_ids[i] = policy_topology_id(&sys.policies[i]);
 
 	lw_ctl_default_params(&params, lowest_passive(&sys));
 	params.policy = policy;
@@ -439,10 +467,10 @@ int main(int argc, char **argv)
 		int c = 0;
 
 		have_contract = lw_contract_maintain(&contract, false, true, lw_now_ns(),
-						     CONTRACT_RETRY_NS, CONTRACT_STALE_NS,
+						     LW_CONTRACT_RETRY_NS, LW_CONTRACT_STALE_NS,
 						     &contract_next_try, &c);
-		fprintf(stderr, "lerwatt: Lertick contract %s\n",
-			have_contract ? "attached" : c == -ENOENT ? "absent (running alone)" :
+		fprintf(stderr, "lerwatt: Lertick transport %s\n",
+			have_contract ? "opened; awaiting matching demand" : c == -ENOENT ? "absent (running alone)" :
 			strerror(-c));
 	}
 	if (telemetry) {
@@ -532,12 +560,12 @@ int main(int argc, char **argv)
 		if (use_contract) {
 			bool was = have_contract;
 
-			have_contract = lw_contract_maintain(&contract, have_contract, true, s.t_ns,
-							     CONTRACT_RETRY_NS, CONTRACT_STALE_NS,
+			have_contract = lw_contract_maintain(&contract, have_contract, true, lw_now_ns(),
+							     LW_CONTRACT_RETRY_NS, LW_CONTRACT_STALE_NS,
 							     &contract_next_try, NULL);
 			if (have_contract != was)
-				fprintf(stderr, "lerwatt: Lertick contract %s\n",
-					have_contract ? "attached" : "lost (running alone)");
+				fprintf(stderr, "lerwatt: Lertick transport %s\n",
+					have_contract ? "opened; awaiting matching demand" : "lost (running alone)");
 		}
 		if (tel)
 			fprintf(tel, "{\"t\":%.3f,\"t_ns\":%llu,\"mode\":\"%s\",\"power_w\":%.3f,\"measured\":%s,\"clusters\":[",
@@ -547,6 +575,8 @@ int main(int argc, char **argv)
 
 		struct lw_ctl_in inputs[LW_MAX_POLICIES];
 		struct lw_ctl_out outputs[LW_MAX_POLICIES];
+		uint64_t sessions[LW_CONTRACT_MAX_CLUSTERS] = { 0 };
+		int matched_policies = 0;
 		for (int i = 0; i < sys.npolicies; i++) {
 			const struct lw_policy *p = &sys.policies[i];
 			struct lt_demand_rec d;
@@ -567,9 +597,12 @@ int main(int argc, char **argv)
 				if (j != i)
 					in.other_power_w += est_w[j];
 			if (have_contract &&
-			    lw_contract_demand(&contract, (unsigned int)i, s.t_ns,
-					       5ull * period_ms * 1000000ull, &d))
+			    lw_contract_demand(&contract, (unsigned int)i, topology_ids[i], lw_now_ns(),
+					       LW_CONTRACT_DEMAND_MAX_AGE_NS, &d)) {
 				in.lat_crit = d.lat_crit_milli / 1000.0;
+				sessions[i] = d.session_id;
+				matched_policies++;
+			}
 
 			inputs[i] = in;
 		}
@@ -595,17 +628,6 @@ int main(int argc, char **argv)
 			a.min_khz[i] = o.floor_khz;
 			a.resume_latency_us[i] = o.resume_latency_us;
 
-			if (have_contract) {
-				struct lw_contract_rec r = {
-					.ceiling_cap = o.ceiling_cap,
-					.floor_cap = o.floor_cap,
-					.energy_price_milli = o.price_milli,
-					.thermal_headroom_mc = o.headroom_mc,
-					.valid_until_ns = s.t_ns + 3ull * period_ms * 1000000ull,
-				};
-
-				lw_contract_publish(&contract, (unsigned int)i, &r);
-			}
 			if (tel)
 				fprintf(tel, "%s{\"id\":%d,\"temp_c\":%.3f,\"busy\":%.3f,\"cur_mhz\":%u,"
 					"\"ceil_mhz\":%u,\"budget_w\":%.3f,\"est_w\":%.3f,\"price\":%u,"
@@ -660,7 +682,40 @@ int main(int argc, char **argv)
 			ret = 2;
 			break;
 		}
+		/* Advice is published only after successful hardware actuation and a
+		 * matching fresh demand identity. It is never an alternate actuator. */
+		if (have_contract) {
+			uint64_t published_ns = lw_now_ns();
+
+			for (int i = 0; i < sys.npolicies; i++) {
+				struct lt_demand_rec fresh;
+				const struct lw_ctl_out *o = &outputs[i];
+				struct lw_contract_rec record = {
+					.ceiling_cap = o->ceiling_cap,
+					.floor_cap = o->floor_cap,
+					.energy_price_milli = o->price_milli,
+					.thermal_headroom_mc = o->headroom_mc,
+					.valid_until_ns = published_ns + LW_CONTRACT_TTL_NS,
+					.topology_id = topology_ids[i], .session_id = sessions[i],
+				};
+
+				if (sessions[i] && lw_contract_demand(&contract, (unsigned int)i,
+					    topology_ids[i], published_ns, LW_CONTRACT_DEMAND_MAX_AGE_NS, &fresh) &&
+				    fresh.session_id == sessions[i])
+					lw_contract_publish(&contract, (unsigned int)i, &record);
+			}
+		}
+		const char *link = !use_contract ? "off" : matched_policies == sys.npolicies ? "connected" : "waiting";
+		if (previous_matches != matched_policies) {
+			fprintf(stderr, "lerwatt: Lertick link %s (%d/%d matching policies; ABI %d)\n",
+				link, matched_policies, sys.npolicies, LW_CONTRACT_VERSION);
+			previous_matches = matched_policies;
+		}
 		if (watchdog) {
+			char status[160];
+
+			snprintf(status, sizeof(status), "Controlling CPU limits; Lertick: %s", link);
+			lw_notify_set_status(&notifier, status);
 			int error = lw_notify_progress(&notifier, lw_now_ns());
 
 			if (error) {

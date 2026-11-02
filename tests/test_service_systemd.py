@@ -61,6 +61,8 @@ def main():
     parser.add_argument("--special-prefix", action="store_true",
                         help="also validate executable paths with spaces, percent and dollar")
     parser.add_argument("--daemon", default="build/lerwattd-standalone")
+    parser.add_argument("--with-lertick", action="store_true",
+                        help="install BPF-capable optional coordination; absent peer must remain independent")
     options = parser.parse_args()
     if not options.allow_systemd_test or sys.platform != "linux" or os.geteuid() != 0 or not virtual_machine():
         parser.error("requires explicit --allow-systemd-test as root in a disposable QEMU/KVM VM")
@@ -106,7 +108,7 @@ def main():
     shutil.copy2(daemon, actual)
     # Test-only wrapper changes only the selected sysroot. Insert before '--'
     # so the lock-held maintenance command and its argv remain intact.
-    wrapper = build / "lerwattd-standalone"
+    wrapper = build / ("lerwattd" if options.with_lertick else "lerwattd-standalone")
     wrapper.write_text("#!/usr/bin/python3\nimport os,sys\na=sys.argv[1:]\n"
                        "i=a.index('--') if '--' in a else len(a)\n"
                        f"a[i:i]=['--sysroot',{str(fixture)!r}]\n"
@@ -145,7 +147,8 @@ def main():
 
     result = {}
     try:
-        installed = call(str(helper), "install", env=environment)
+        install_arguments = ["--lertick"] if options.with_lertick else []
+        installed = call(str(helper), "install", *install_arguments, env=environment)
         assert "running continuously" in installed.stdout, installed.stdout + installed.stderr
         pid = wait_for(healthy, "service never became ready")
         assert call("systemctl", "is-enabled", unit).stdout.strip() == "enabled"
@@ -153,6 +156,12 @@ def main():
         command = Path(f"/proc/{pid}/cmdline").read_bytes().split(b"\0")
         duration = command.index(b"--duration")
         assert command[duration + 1] == b"0" and b"--watchdog" in command
+        if options.with_lertick:
+            assert b"--no-contract" not in command
+            assert "contract=auto" in (work / "config/lerwatt.conf").read_text()
+            wait_for(lambda: "Lertick: waiting" in property_value("StatusText"),
+                     "absent peer did not report independent waiting state")
+            result["optional_coordination_waits_independently"] = True
         time.sleep(2)
         assert current_pid() == pid and healthy()
         result["enabled_unlimited_ready"] = True

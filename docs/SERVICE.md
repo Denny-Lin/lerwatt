@@ -18,7 +18,7 @@ lerwatt logs
 
 The helper builds as your normal user and requests sudo for installation and service operations. It checks hardware inputs and known competing policy services before replacing an existing managed service. Commands normally live under `/usr/local`; the unit is `/etc/systemd/system/lerwatt.service`. Installation requires no reboot.
 
-`status` shows boot enablement and current status. A healthy worker reports `active (running)` after its first successful control cycle. An enabled service can still be failing or retrying, so inspect both status and logs. A failed activation is reported as an error; installed files alone are not reported as running control.
+`status` shows boot enablement, configured Lertick coordination mode and current service status. A healthy worker reports `active (running)` after its first successful control cycle. Configuration alone does not prove a connected peer; worker status/logs show current integration state. An enabled service can still be failing or retrying, so inspect both status and logs. A failed activation is reported as an error; installed files alone are not reported as running control.
 
 To update, update the trusted checkout and run `./deploy.sh install` again. The helper stops its owned worker, completes recovery, replaces files under the controller lock and starts with retained configuration. It refuses an unexpected unit or unreviewed drop-ins rather than overwriting another installation.
 
@@ -74,14 +74,16 @@ policy=mpc
 period_ms=100
 soft_limit_c=auto
 temperature_sensor=auto
+contract=off
 ```
 
 | Key | Accepted value |
 | --- | --- |
 | `policy` | `mpc` or `rule` |
-| `period_ms` | Integer `10` through `10000` |
+| `period_ms` | Integer `10` through `10000`; `contract=auto` requires `10` through `100` |
 | `soft_limit_c` | `auto`, or a positive Celsius value accepted by the daemon |
 | `temperature_sensor` | `auto`, or an actual CPU/package sensor input under `/sys/` |
+| `contract` | `off` (new-install default), or `auto` for optional Lertick coordination with the BPF-capable daemon |
 
 Use one assignment per line, no spaces around `=`, shell syntax or inline comments. Blank lines and lines starting with `#` are accepted. The file is parsed as data, never sourced as a shell script. Unknown keys and invalid values prevent startup.
 
@@ -102,7 +104,17 @@ lerwatt restart
 lerwatt status
 ```
 
-The service fixes the real-machine root, disables optional Lertick contract publication and enables unlimited supervised operation. `--duration` and `--telemetry` are foreground-trial options, not persistent-install overrides. Service diagnostics use journald, with unit-level message rate limits; no per-period JSON file grows by default.
+The service fixes the real-machine root and enables unlimited supervised operation. `--duration` and `--telemetry` are foreground-trial options, not persistent-install overrides. Service diagnostics use journald, with unit-level message rate limits; no per-period JSON file grows by default.
+
+### Optional Lertick coordination
+
+```sh
+./deploy.sh install --lertick --period-ms 100
+```
+
+This selects the full BPF-capable build and saves `contract=auto`. The helper checks capability and configuration before stopping the old service. A plain reinstall preserves the saved mode; `./deploy.sh install --no-lertick` switches it off. New independent installations retain the BPF-free build. Because settings are root-private, an upgrade without an explicit mode first asks sudo to read the validated mode, then builds as the normal user.
+
+The scheduler remains a separately installed and enabled project. Either may start first, stop or update independently. Compatible model-only updates need no peer update or joint retraining. Incompatible or expired records disable the handoff while local control continues. See the identical [integration guide](INTEGRATION.md) in both repositories for setup, ownership, ABI compatibility and failure behavior.
 
 ## Learned thermal state
 

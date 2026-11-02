@@ -103,6 +103,10 @@ The thermal model learns online; rule control covers warm-up and fallback. The s
 
 Linux continues handling frequency transitions, idle-state selection and thermal protection. Learned planning sets CPU frequency ceilings; frequency floors and PM QoS idle-latency constraints currently use rules. The separate five-second point forecast is reported in telemetry; it does not drive control decisions. [Architecture and expansion →](docs/DESIGN.md)
 
+## Works with Lertick
+
+Let [Lertick](https://github.com/Denny-Lin/lertick) handle task scheduling while Lerwatt manages CPU power constraints. Enable their optional local link with `./deploy.sh install --lertick`; each keeps its own model, updates and recovery. Model improvements that keep the protocol compatible do not require updating or retraining the peer. Either project can run alone. **[Connect them in a few steps →](docs/INTEGRATION.md)**
+
 ## Tested Ubuntu versions
 
 | Version | Software environments tested | Result |
@@ -134,7 +138,7 @@ Physical energy savings, battery life and throughput gains remain unmeasured. Pr
 | Configure continuous operation or understand the watchdog | [Persistent service](docs/SERVICE.md) |
 | Select a sensor, log telemetry or recover a trial | [Usage and recovery](docs/USAGE.md) |
 | Understand the AI model and deterministic limits | [Design](docs/DESIGN.md) |
-| Connect the optional Lertick scheduler | [Lertick integration](docs/USAGE.md#optional-lertick-integration) |
+| Connect the optional Lertick scheduler | [Shared integration guide](docs/INTEGRATION.md) |
 | Reproduce the experiments or contribute | [Development](docs/USAGE.md#development-and-reproduction) · [Simulator](docs/SIMULATION.md) |
 | Share a hardware trial or report a problem | [Open an issue](https://github.com/Denny-Lin/lerwatt/issues) |
 

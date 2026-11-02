@@ -2,19 +2,21 @@
 
 Status: **2026-11-02.** The rule controller, online two-node thermal model,
 point forecasts, optional joint MPC, restore journal and Lertick shared-map
-contract are implemented. Both independent operation and three-cluster
-coordination have been exercised in an eight-vCPU ARM64 VM. Frequencies,
-power and temperature are simulated; real-board behavior remains unverified.
+contract are implemented. Historical independent-operation and three-cluster
+coordination experiments used an eight-vCPU ARM64 VM. Frequencies,
+power and temperature were simulated; those records do not establish current
+ABI 2 compatibility or real-board behavior.
 See [Simulation](SIMULATION.md) for the current measurements and regressions.
 The original source study used [Linux v7.3](https://github.com/torvalds/linux/tree/v7.3)
 and [sched-ext/scx](https://github.com/sched-ext/scx) as of 2026-10-30.
 That is a source reference, not a minimum kernel version or a claim of
 compatibility with every driver. Standalone Lerwatt does not require
 sched_ext; Lertick integration has separate kernel and BPF requirements.
-`deploy.sh` builds a BPF-free native daemon on the target Linux machine and
+`deploy.sh` defaults to a BPF-free native daemon on the target Linux machine and
 provides checks, non-actuating preview, foreground trials and a persistent
 systemd service with independent watchdog recovery and learned-parameter
-checkpoints. It never starts QEMU or requires simulator files. See
+checkpoints. `install --lertick` selects its full BPF-capable build and persists
+optional coordination. It never starts QEMU or requires simulator files. See
 [continuous operation](SERVICE.md) for installation and validation boundaries.
 
 Labels below distinguish **implemented**, **upstream interface**, and
@@ -80,17 +82,26 @@ transaction across clusters or a synchronized global snapshot. Lertick's BPF
 reader uses compiler barriers and tolerates a mixed-period copy after field
 clamping; the contract must not be treated as a hard safety interlock.
 
+**ABI 2** binds records to the full sorted policy CPU-set hash (`topology_id`)
+and a fresh nonzero random Lertick attachment generation (`session_id`). Lerwatt
+echoes the session only after fresh compatible demand. A mismatched ABI,
+topology or session disables the handoff. The two models, training/checkpoints
+and release versions remain private; a model-only update retains the ABI and
+does not require a peer update or retraining. See the maintained compatibility
+matrix and exact specification in the [shared integration guide](INTEGRATION.md).
+
 **`lw_contract` (written by Lerwatt, read by Lertick per event), one record per cluster:**
 
 | Field | Meaning |
 | --- | --- |
 | `seq` | Even when stable, odd while being written |
 | `version` | Shared record-layout version |
+| `topology_id`, `session_id` | Policy CPU-set identity and current Lertick attachment generation |
 | `ceiling_cap` | Nonzero upper bound on Lertick's target, on the 0–1024 capacity scale; zero means no contract ceiling |
 | `floor_cap` | Lowest capacity to request while latency-critical work runs |
 | `energy_price_milli` | Normalized price, 0–1000; currently a fixed ramp as temperature approaches the soft limit |
 | `thermal_headroom_mc` | Soft limit minus observed zone temperature, in millidegrees C |
-| `valid_until_ns` | Monotonic-clock expiry; normally three Lerwatt periods after publication |
+| `valid_until_ns` | `CLOCK_MONOTONIC` expiry, at most 300 ms after publication |
 
 **`lt_demand` (written by Lertick, read by Lerwatt each period), one record per cluster:**
 
@@ -98,11 +109,18 @@ clamping; the contract must not be treated as a hard safety interlock.
 | --- | --- |
 | `seq` | As above |
 | `version` | Shared record-layout version |
+| `topology_id`, `session_id` | As above; Lerwatt validates before accepting demand |
 | `pred_util` | Smoothed per-CPU utilization, averaged by cluster; publication targets 100 ms |
 | `lat_crit_milli` | Share of sched_ext CPU runtime classified as latency-critical, 0–1000 |
 | `cpuperf_max`, `cpuperf_mean` | Maximum and mean targets published for the cluster |
 | `p99_wake_ns` | Upper edge of the log2 histogram bucket containing the wake-latency P99; not an application SLO measurement |
 | `updated_ns` | Monotonic-clock freshness timestamp |
+
+Demand publication targets 100 ms; accepted age is at most 500 ms. Absent maps
+are retried every second and a silent attachment is dropped after two seconds.
+The enabled service requires a 10–100 ms period to fit its 300 ms constraints.
+There are at most eight policy entries; records are 48 bytes (`lw_contract`)
+and 64 bytes (`lt_demand`). Capacity uses 0–1024 and shares/prices use 0–1000.
 
 The current Lerwatt controller consumes only fresh `lat_crit_milli` from the
 demand record. The other fields are available for inspection/future control;
@@ -186,7 +204,8 @@ or enforce an application P99 constraint.
    runtime state. Dry-run also disables contract publication. Explicit
    telemetry output can still create a new private log file. Existing files
    and special files are rejected; stdout remains an explicit stream. The deployment
-   helper fixes the real-machine root and disables scheduler coordination.
+   helper fixes the real-machine root. Foreground trials disable scheduler
+   coordination; persistent installation can explicitly enable it.
 5. Expired contract records give neutral scheduler constraints; stale demand
    stops influencing Lerwatt. This is availability fallback, not a fail-closed
    thermal cap. Kernel passive/critical trips and hardware protections remain
@@ -299,7 +318,8 @@ Delivery is incremental:
 
 1. **Native deployment helper (implemented).** `deploy.sh` builds on the
    target and offers checks, preview, foreground trials and service management.
-   Its BPF-free binary avoids modern BPF-header requirements. Default install
+   Its independent BPF-free binary avoids modern BPF-header requirements;
+   `install --lertick` opts into the full build and ABI 2 coordination. Default install
    enables/starts its own persistent systemd unit after checking hardware and
    known control conflicts. Other managers are not stopped automatically.
    `install-tools` keeps a service-free path for other init systems;

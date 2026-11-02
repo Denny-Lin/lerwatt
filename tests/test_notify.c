@@ -71,6 +71,13 @@ int main(void)
 	assert(!lw_notify_progress(&notify, 1500000000));
 	receive(server, message, sizeof(message));
 	assert(strstr(message, "WATCHDOG=1") && !strstr(message, "READY="));
+	lw_notify_set_status(&notify, "Controlling CPU limits; Lertick: connected");
+	assert(!lw_notify_progress(&notify, 1500000001));
+	receive(server, message, sizeof(message));
+	assert(strstr(message, "Lertick: connected") && !strstr(message, "READY="));
+	lw_notify_set_status(&notify, "invalid\nREADY=1");
+	assert(!lw_notify_progress(&notify, 1500000002));
+	assert(recv(server, message, sizeof(message), 0) < 0 && errno == EAGAIN);
 	lw_notify_close(&notify);
 	assert(notify.fd == -1);
 	receive(server, message, sizeof(message));

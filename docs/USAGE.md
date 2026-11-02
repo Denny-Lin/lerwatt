@@ -15,7 +15,7 @@ The deployment helper builds on the target machine and checks actual Linux inter
 | Thermal inputs | CPU thermal zones, Intel `x86_pkg_temp`/`coretemp` package sensors, or AMD `k10temp` Tdie. An explicit `--temperature-sensor /sys/...` can select another CPU input in millidegrees C. Missing/ambiguous CPU inputs block the trial. |
 | Idle constraints | Per-CPU `power/pm_qos_resume_latency_us` is optional; absent files are skipped. Per-entry idle-state selection stays with the kernel governor. |
 | Power estimates | A complete Linux Energy Model with identified physical units is used when available. Legacy milliwatts are converted to microwatts; unknown/abstract scales use a cubic relative-power proxy whose values are not calibrated watts. A discovered hwmon power channel is logged as reported by that device, not automatically as whole-machine power. |
-| Lertick | Not needed for hardware trials. The helper builds without BPF support, avoiding a dependency on modern BPF headers or sched_ext. Scheduler integration uses the separate full build and has its own [Lertick requirements](https://github.com/Denny-Lin/lertick). |
+| Lertick | Optional. New independent installations and hardware trials use the BPF-free build. `./deploy.sh install --lertick` selects the full build and persistent coordination, requiring usable Linux userspace BPF headers and the separate [Lertick kernel/toolchain requirements](https://github.com/Denny-Lin/lertick). See the [shared integration guide](INTEGRATION.md). |
 
 Deployment environments actually tested on **2026-11-01 (America/Los_Angeles)**:
 
@@ -195,15 +195,17 @@ The VM executes the real daemon, Linux scheduling and file operations, while boa
 
 ## Optional Lertick integration
 
-The deployed hardware-trial binary deliberately excludes BPF support. For scheduler integration, first run `make build/lerwattd` in this checkout to build the full daemon with suitable Linux BPF headers. Build [Lertick](https://github.com/Denny-Lin/lertick) separately. From the **Lertick checkout**, start its scheduler:
+For persistent native use, run this from the Lerwatt checkout:
 
 ```sh
-sudo build/scx_lertick --lerwatt --track-all --duration 120
+./deploy.sh install --lertick --period-ms 100
 ```
 
-From the Lerwatt checkout, start the daemon with the appropriate explicit `--sysroot`, omitting `--no-contract`. For a coordinated simulator experiment, also omit the simulator's `--no-cpuperf` flag and follow the [VM validation setup](https://github.com/Denny-Lin/lertick/blob/main/docs/LERWATT_VM_VALIDATION.md).
+This builds the full daemon without libbpf, persists `contract=auto` and keeps Lerwatt's watchdog/recovery. Install Lertick separately, then use `lertick integration on` and `lertick enable`. Lertick installation alone does not enable its service. Plain upgrades preserve modes; `./deploy.sh install --no-lertick` and `lertick integration off` turn the link off.
 
-Either controller may start first. Lerwatt retries absent maps; Lertick ignores expired limit records. Lerwatt currently consumes the latency-critical share of Lertick's demand record; the other demand fields are available for future policies. Three-cluster coordination and standalone scheduler operation have been exercised in an eight-vCPU ARM64 VM.
+Either controller may start first. ABI 2 checks policy topology, attachment identity and freshness; unavailable or incompatible peers leave independent operation. Models remain private and compatible model changes do not require joint retraining. The [shared integration guide](INTEGRATION.md) covers installation, status, independent upgrades and exact protocol rules.
+
+For raw-loader research, build with `make hardware-lertick`, select the appropriate explicit `--sysroot`, and omit `--no-contract` to request the link. A coordinated simulator experiment also needs the simulator's CPUperf behavior enabled; use the [historical VM validation setup](https://github.com/Denny-Lin/lertick/blob/main/docs/LERWATT_VM_VALIDATION.md) as background, and revalidate its old protocol observations for the current ABI. A hardware service never depends on that simulator.
 
 ## Current scope and expansion
 

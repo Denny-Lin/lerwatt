@@ -16,12 +16,14 @@ struct lw_contract {
 	struct lw_contract_rec *lw;	/* writable alias of lw_map, or NULL */
 	const struct lt_demand_rec *lt;	/* mmap, read-only */
 	unsigned int nentries;
+	unsigned int lw_id, lt_id; /* pinned-object identities, not model versions */
 	size_t lw_len;
 	size_t lt_len;
 	struct lt_demand_rec lt_last[LW_CONTRACT_MAX_CLUSTERS];
 	bool lt_valid[LW_CONTRACT_MAX_CLUSTERS];
 	uint64_t opened_ns;		/* set by lw_contract_maintain() */
 	uint64_t last_fresh_ns;		/* newest fresh demand seen */
+	uint64_t next_pin_check_ns;
 };
 
 /*
@@ -34,12 +36,12 @@ void lw_contract_close(struct lw_contract *c);
 void lw_contract_publish(struct lw_contract *c, unsigned int cluster,
 			 const struct lw_contract_rec *val);
 /* Latest consistent, fresh (max_age_ns) demand record; false if none. */
-bool lw_contract_demand(struct lw_contract *c, unsigned int cluster, uint64_t now_ns,
+bool lw_contract_demand(struct lw_contract *c, unsigned int cluster, uint64_t topology_id, uint64_t now_ns,
 			uint64_t max_age_ns, struct lt_demand_rec *out);
 
 /*
- * Follow Lertick as it starts and stops. Lertick runs are finite, and each run
- * pins new maps. While detached, try to open every retry_ns. While attached,
+ * Follow independent Lertick starts, stops and upgrades. Each attachment pins
+ * new maps. While detached, try to open every retry_ns. While attached,
  * detach once no cluster has reported fresh demand for stale_ns. *next_try_ns
  * is caller state, initially zero. Returns the new attached state; *err_out
  * (optional) gets the last open result.

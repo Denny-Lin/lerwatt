@@ -92,6 +92,7 @@ int main(int argc, char **argv)
 	struct lw_contract contract;
 	bool have_contract = false;
 	uint64_t contract_next_try = 0;
+	uint64_t topology_ids[SIM_MAX_CLUSTERS] = { 0 };
 	struct sigaction sa = { 0 };
 	double demand[SIM_MAX_CPUS] = { 0 }, max_zone[SIM_MAX_ZONES], next_log = 0;
 	char err[256];
@@ -142,6 +143,14 @@ int main(int argc, char **argv)
 		return 1;
 	}
 	memset(&contract, 0, sizeof(contract));
+	for (int k = 0; k < sim_rk3588.nclusters; k++) {
+		const struct sim_cluster_desc *cluster = &sim_rk3588.clusters[k];
+		uint64_t hash = lw_contract_topology_seed();
+
+		for (int cpu = cluster->first_cpu; cpu < cluster->first_cpu + cluster->ncpus; cpu++)
+			hash = lw_contract_topology_add_cpu(hash, (uint32_t)cpu);
+		topology_ids[k] = lw_contract_topology_finish(hash, (uint32_t)cluster->ncpus);
+	}
 	if (use_cpuperf)
 		have_contract = lw_contract_maintain(&contract, false, false, now_ns(),
 						     1000000000ull, 2000000000ull, &contract_next_try, NULL);
@@ -182,7 +191,8 @@ int main(int argc, char **argv)
 			/* As in schedutil: a fresh sched_ext target replaces PELT, even 0. */
 			s.cl[k].cpuperf_req = -1;
 			if (have_contract &&
-			    lw_contract_demand(&contract, (unsigned int)k, now_ns(), 500000000ull, &d))
+			    lw_contract_demand(&contract, (unsigned int)k, topology_ids[k], now_ns(),
+					       LW_CONTRACT_DEMAND_MAX_AGE_NS, &d))
 				s.cl[k].cpuperf_req = (int32_t)d.cpuperf_max;
 		}
 		sim_step(&s, demand, dt);

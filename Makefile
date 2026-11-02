@@ -41,6 +41,9 @@ $(BUILD)/lerwattd-standalone: $(D_SRCS) $(wildcard include/lerwatt/*.h src/*.h) 
 
 hardware: $(BUILD)/lerwattd-standalone
 
+# Optional native Lertick coordination; raw BPF syscalls, no libbpf dependency.
+hardware-lertick: $(BUILD)/lerwattd
+
 $(BUILD)/test_runtime_fs: tests/test_runtime_fs.c src/hal_fs.c src/hal_actuate.c $(wildcard include/lerwatt/*.h src/*.h) | $(BUILD)
 	$(CC) $(CFLAGS) -o $@ tests/test_runtime_fs.c src/hal_fs.c src/hal_actuate.c $(LDLIBS)
 
@@ -53,13 +56,21 @@ $(BUILD)/test_notify: tests/test_notify.c src/notify.c src/notify.h | $(BUILD)
 $(BUILD)/test_checkpoint: tests/test_checkpoint.c src/checkpoint.c src/checkpoint.h $(wildcard include/lerwatt/*.h) | $(BUILD)
 	$(CC) $(CFLAGS) -o $@ tests/test_checkpoint.c src/checkpoint.c $(LDLIBS)
 
-test-deployment: $(BUILD)/lerwattd-standalone $(BUILD)/test_runtime_fs $(BUILD)/test_discovery $(BUILD)/test_notify $(BUILD)/test_checkpoint
+$(BUILD)/test_contract: tests/test_contract.c src/contract.c src/contract.h include/lerwatt/contract.h | $(BUILD)
+	$(CC) $(CFLAGS) -DLW_NO_BPF -o $@ tests/test_contract.c src/contract.c $(LDLIBS)
+
+test-deployment: $(BUILD)/lerwattd-standalone $(BUILD)/test_runtime_fs $(BUILD)/test_discovery $(BUILD)/test_notify $(BUILD)/test_checkpoint $(BUILD)/test_contract
+	python3 tests/check_integration_abi.py
 	$(BUILD)/test_runtime_fs
 	$(BUILD)/test_discovery
 	$(BUILD)/test_notify
 	$(BUILD)/test_checkpoint
+	$(BUILD)/test_contract
 	python3 tests/test_daemon_deployment.py $(BUILD)/lerwattd-standalone
 	sh tests/test_deploy.sh
+
+test-integration-abi:
+	python3 tests/check_integration_abi.py
 
 install:
 	PREFIX="$(PREFIX)" DESTDIR="$(DESTDIR)" ./deploy.sh install
@@ -113,4 +124,4 @@ e2e: all
 clean:
 	rm -rf $(BUILD)
 
-.PHONY: all hardware install uninstall test test-deployment e2e clean
+.PHONY: all hardware hardware-lertick install uninstall test test-deployment test-integration-abi e2e clean

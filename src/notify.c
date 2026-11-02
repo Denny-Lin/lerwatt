@@ -5,6 +5,7 @@
 #include <limits.h>
 #include <stddef.h>
 #include <stdint.h>
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <sys/socket.h>
@@ -43,6 +44,7 @@ int lw_notify_init(struct lw_notify *notify, unsigned int period_ms)
 
 	memset(notify, 0, sizeof(*notify));
 	notify->fd = -1;
+	strcpy(notify->status, "Controlling CPU limits");
 	if (!path || !path[0] || (path[0] != '/' && path[0] != '@') ||
 	    unsigned_decimal(getenv("WATCHDOG_USEC"), &usec) ||
 	    usec > UINT64_MAX / 1000 || usec < 100000)
@@ -92,20 +94,31 @@ static int send_notification(int fd, const char *text)
 int lw_notify_progress(struct lw_notify *notify, uint64_t now_ns)
 {
 	int error;
+	char message[256];
 
 	if (notify->fd < 0)
 		return -EINVAL;
-	if (notify->ready && now_ns >= notify->last_ns &&
+	if (notify->ready && !notify->status_dirty && now_ns >= notify->last_ns &&
 	    now_ns - notify->last_ns < notify->interval_ns)
 		return 0;
-	error = send_notification(notify->fd, notify->ready ?
-		"WATCHDOG=1\nSTATUS=Controlling CPU limits" :
-		"READY=1\nWATCHDOG=1\nSTATUS=Controlling CPU limits");
+	snprintf(message, sizeof(message), "%sWATCHDOG=1\nSTATUS=%s",
+		 notify->ready ? "" : "READY=1\n", notify->status);
+	error = send_notification(notify->fd, message);
 	if (!error) {
 		notify->ready = true;
 		notify->last_ns = now_ns;
+		notify->status_dirty = false;
 	}
 	return error;
+}
+
+void lw_notify_set_status(struct lw_notify *notify, const char *status)
+{
+	if (!status || strlen(status) >= sizeof(notify->status) ||
+	    strchr(status, '\n') || strchr(status, '\r') || !strcmp(status, notify->status))
+		return;
+	strcpy(notify->status, status);
+	notify->status_dirty = true;
 }
 
 void lw_notify_close(struct lw_notify *notify)
