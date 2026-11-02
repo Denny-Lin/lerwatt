@@ -1,0 +1,183 @@
+{
+  "rows": 60,
+  "different_rows": 4,
+  "differences": [
+    {
+      "pattern": 2,
+      "seed": 42,
+      "joint": true,
+      "mode": "nominal",
+      "fields": {
+        "makespan_s": [
+          365.22,
+          381.49
+        ],
+        "simulated_board_j": [
+          2633.845193,
+          2672.639652
+        ],
+        "peak_c": [
+          81.307,
+          79.461
+        ],
+        "job_p99_s": [
+          5.21,
+          21.48
+        ],
+        "point_mae_c": [
+          0.571386,
+          0.591575
+        ],
+        "reference_mae_c": [
+          0.877231,
+          0.884357
+        ],
+        "forecast_points": [
+          10806,
+          11292
+        ],
+        "queries": [
+          12639,
+          13125
+        ],
+        "frequency_transitions": [
+          7936,
+          8114
+        ]
+      }
+    },
+    {
+      "pattern": 2,
+      "seed": 42,
+      "joint": true,
+      "mode": "cooperative",
+      "fields": {
+        "makespan_s": [
+          365.22,
+          381.49
+        ],
+        "simulated_board_j": [
+          2633.845193,
+          2672.639652
+        ],
+        "peak_c": [
+          81.307,
+          79.461
+        ],
+        "job_p99_s": [
+          5.21,
+          21.48
+        ],
+        "point_mae_c": [
+          0.571386,
+          0.591575
+        ],
+        "reference_mae_c": [
+          0.877231,
+          0.884357
+        ],
+        "forecast_points": [
+          10806,
+          11292
+        ],
+        "queries": [
+          12639,
+          13125
+        ],
+        "frequency_transitions": [
+          7936,
+          8114
+        ]
+      }
+    },
+    {
+      "pattern": 2,
+      "seed": 7,
+      "joint": true,
+      "mode": "nominal",
+      "fields": {
+        "makespan_s": [
+          381.49,
+          365.22
+        ],
+        "simulated_board_j": [
+          2672.639652,
+          2633.845193
+        ],
+        "peak_c": [
+          79.461,
+          81.307
+        ],
+        "job_p99_s": [
+          21.48,
+          5.21
+        ],
+        "point_mae_c": [
+          0.566601,
+          0.552913
+        ],
+        "reference_mae_c": [
+          0.8588,
+          0.857648
+        ],
+        "forecast_points": [
+          11292,
+          10806
+        ],
+        "queries": [
+          13125,
+          12639
+        ],
+        "frequency_transitions": [
+          8114,
+          7936
+        ]
+      }
+    },
+    {
+      "pattern": 2,
+      "seed": 7,
+      "joint": true,
+      "mode": "cooperative",
+      "fields": {
+        "makespan_s": [
+          381.49,
+          365.22
+        ],
+        "simulated_board_j": [
+          2672.639652,
+          2633.845193
+        ],
+        "peak_c": [
+          79.461,
+          81.307
+        ],
+        "job_p99_s": [
+          21.48,
+          5.21
+        ],
+        "point_mae_c": [
+          0.566601,
+          0.552913
+        ],
+        "reference_mae_c": [
+          0.8588,
+          0.857648
+        ],
+        "forecast_points": [
+          11292,
+          10806
+        ],
+        "queries": [
+          13125,
+          12639
+        ],
+        "frequency_transitions": [
+          8114,
+          7936
+        ]
+      }
+    }
+  ],
+  "conclusion": "Absolute cross-platform equality failed. Frozen original vs refactored nominal matches on each platform; A/B conclusions match. Root cause of platform differences not established."
+}

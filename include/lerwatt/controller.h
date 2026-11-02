@@ -31,6 +31,7 @@
 #include "lerwatt/learn.h"
 #include "lerwatt/forecast.h"
 #include "lerwatt/temporal.h"
+#include "lerwatt/predict.h"
 
 enum lw_ctl_policy {
 	LW_POLICY_RULE = 0,	/* PI power budget with hysteresis (default) */
@@ -53,6 +54,7 @@ struct lw_ctl_params {
 	double lat_crit_threshold;	/* 0..1 */
 	enum lw_ctl_policy policy;
 	bool cross_cluster;		/* opt-in bounded joint search; MPC only */
+	bool cooperative_prediction;	/* opt-in action-supported correction */
 	bool temporal_forecast;		/* point forecast only; never changes planning */
 	double mpc_horizon_s;		/* look-ahead of the predictive ceiling */
 	double mpc_over_soft_c;		/* line the plan holds, above the soft limit */
@@ -71,6 +73,9 @@ struct lw_ctl_in {
 	int32_t temp_mc;		/* INT32_MIN when unknown */
 	double busy_mean;		/* 0..1, mean over the cluster's CPUs */
 	uint32_t cur_khz;
+	uint32_t effective_max_khz;	/* 0 when unavailable; never assumed to be actual clock */
+	uint32_t allowed_max_khz;	/* initial user/firmware bound, 0 when unavailable */
+	enum lw_power_quality power_quality;
 	int ncpus;
 	const struct lw_opp *opps;	/* ascending */
 	int nopps;
@@ -91,7 +96,7 @@ struct lw_ctl_state {
 	uint64_t last_down_ns;
 	uint64_t last_up_ns;
 	uint64_t ceiling_changes;
-	struct lw_thermal_model tm;	/* learned under LW_POLICY_MPC */
+	struct lw_predictor predictor;	/* replaceable observation / prediction backend */
 	uint64_t mpc_periods;		/* periods decided by the model */
 	bool mpc_busy_init;
 	double mpc_busy;		/* slow load average for planning */
@@ -102,8 +107,7 @@ struct lw_ctl_state {
 	double pkg_c;			/* filtered package temperature */
 	double mpc_peak_c;		/* recent peak of the filtered zone temperature */
 	uint64_t last_group_ns;
-	struct lw_forecaster forecaster;
-	struct lw_temporal temporal;
+	uint64_t prediction_queries, prediction_corrections;
 };
 
 struct lw_ctl_out {
@@ -118,6 +122,9 @@ struct lw_ctl_out {
 	uint32_t floor_cap;
 	bool model_ready;
 	bool joint_active;
+	uint64_t prediction_queries, prediction_corrections;
+	enum lw_prediction_reason prediction_reason;
+	double prediction_nominal_c, prediction_upper_c;
 	double predicted_c;		/* model's temperature at the horizon, NAN if none */
 	double forecast_c;		/* expected 5 s point forecast; not a safety bound */
 	double forecast_base_c;		/* unchanged delayed-feedback reference */

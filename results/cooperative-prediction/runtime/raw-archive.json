@@ -1,0 +1,6 @@
+{
+  "path": "results/local/cooperative-native-final6.tgz",
+  "sha256": "7fae9436df50a5d46b37557cef569ff81c19d0bf0f3a09d1b8235f6602b4ea35",
+  "bytes": 385322,
+  "limits": "Two simulated-board native daemon smoke runs, not hardware energy or performance evidence."
+}

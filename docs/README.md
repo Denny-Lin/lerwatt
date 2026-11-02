@@ -14,6 +14,7 @@
 
 | Topic | Read |
 | --- | --- |
+| Shared, replaceable predictor and conservative MPC integration | [Cooperative prediction](COOPERATIVE_PREDICTION.md) |
 | Model, controller, Linux interfaces and expansion boundaries | [Architecture](DESIGN.md) |
 | Reproduce experiments and understand the simulated hardware | [Simulation](SIMULATION.md) · [Development commands](USAGE.md#development-and-reproduction) |
 | Project name | [Naming](NAMING.md) |

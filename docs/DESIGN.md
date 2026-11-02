@@ -163,12 +163,17 @@ ahead. The default temporal correction learns from completed future labels
 and retains its reference when evidence is weak; `--forecast adaptive` uses
 the earlier expert blend. These outputs and their delayed-label accuracy
 scores are separate from the conservative planning prediction `pred_c`.
-Changing the point forecaster does not change control decisions. The
+In default `nominal` mode, changing the point forecaster does not change control decisions.
+The opt-in [cooperative predictor](COOPERATIVE_PREDICTION.md) can conservatively
+use independently validated five-second point evidence in a matching action
+context. Unseen actions and the longer hold retain nominal predictions. The
 [six-case runtime confirmation](../results/point-model-observations/runtime/README.md)
 validates the real daemon against a simulated board's file ABI, not physical
 energy savings or a better MPC policy.
 
-Rule control remains the default; MPC and cross-cluster planning are opt-in.
+Direct daemon invocation defaults to rule control; fresh managed services
+default to independent MPC with rule fallback. Cross-cluster planning and
+cooperative prediction remain opt-in.
 Contract discovery is enabled by default but is optional, and Lerwatt runs
 alone when maps are absent. The evaluation objective is energy-delay product
 subject to latency and thermal limits; the current daemon does not measure

@@ -15,6 +15,7 @@
 
 static int failures;
 static bool joint_mpc;
+static bool cooperative;
 
 #define CHECK(cond, ...) do {						\
 	if (!(cond)) {							\
@@ -85,6 +86,7 @@ static struct result run_from(const char *pattern, int cooling, double ambient_c
 	lw_ctl_default_params(&params, p->passive_mc);
 	params.policy = policy;
 	params.cross_cluster = joint_mpc;
+	params.cooperative_prediction = cooperative;
 	for (int k = 0; k < p->nclusters; k++)
 		for (int i = 0; i < p->clusters[k].nopps; i++) {
 			opps[k][i].khz = p->clusters[k].opps[i].khz;
@@ -120,6 +122,7 @@ static struct result run_from(const char *pattern, int cooling, double ambient_c
 			struct lw_ctl_in in = {
 				.temp_mc = s.zone[zone_of_cluster(p, k)].sensor_mc,
 				.cur_khz = c->opps[s.cl[k].cur_idx].khz,
+				.effective_max_khz = c->opps[sim_eff_max_idx(&s, k)].khz,
 				.ncpus = c->ncpus,
 				.opps = opps[k],
 				.nopps = c->nopps,
@@ -222,11 +225,13 @@ static const struct held_out_case {
 
 int main(int argc, char **argv)
 {
-	if (argc == 2 && !strcmp(argv[1], "--cross-cluster"))
-		joint_mpc = true;
-	else if (argc != 1) {
-		fprintf(stderr, "usage: test_closed_loop [--cross-cluster]\n");
-		return 1;
+	for (int i = 1; i < argc; i++) {
+		if (!strcmp(argv[i], "--cross-cluster")) joint_mpc = true;
+		else if (!strcmp(argv[i], "--cooperative")) cooperative = true;
+		else {
+			fprintf(stderr, "usage: test_closed_loop [--cross-cluster] [--cooperative]\n");
+			return 1;
+		}
 	}
 	const double secs = 900;
 	struct {

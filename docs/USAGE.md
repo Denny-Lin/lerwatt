@@ -133,12 +133,14 @@ The daemon exits after five minutes; Ctrl-C stops it earlier. Normal exit, SIGIN
 | `--policy mpc --cross-cluster` | Searches a bounded combination of frequency choices across clusters using their thermal models and estimated power. |
 | `--forecast temporal` (MPC default) | Reports a five-second point forecast with a delayed-label temperature-history correction. |
 | `--forecast adaptive` | Reports the previous expert-blend point forecast for comparison. |
+| `--prediction nominal` (default) | Keeps the original thermal MPC and point-forecast separation. |
+| `--prediction cooperative` | Uses fresh, action-supported five-second point evidence to tighten MPC predictions. Requires MPC, temporal forecasts and a 10–100 ms period; longer/unseen actions retain the nominal model. |
 
 The thermal model needs at least about 90 seconds of suitable observations; a hot start or insufficient load variation can take longer. Raw launches still start fresh unless `--model-state` is selected. The managed service saves and reloads validated long-term thermal parameters; transient control, recent peaks, load history and pending point forecasts start fresh. Checkpoints have hardware/configuration fingerprints, a format version and a 30-day age bound. [Checkpoint behavior](SERVICE.md#learned-thermal-state).
 
 Joint planning requires trained models, valid temperature inputs, nonzero power estimates and at most 65,536 frequency combinations. Otherwise independent control continues. Its power inputs can come from the Energy Model or the relative proxy; proxy-based planning does not establish a physical-watt optimum.
 
-Telemetry separates `pred_c` (planning prediction) from `forecast_c` (expected temperature five seconds ahead). **The reported point forecast never changes ceilings, floors or safety limits.** `model` and `joint` indicate thermal-model readiness and joint-planner activation; `-1` indicates an unavailable temperature prediction. See [forecast telemetry and fallback](../results/point-model-observations/README.md#runtime-and-telemetry).
+Telemetry separates `pred_c` (planning prediction) from `forecast_c` (expected temperature five seconds ahead). In default `nominal` mode, the point forecast does not influence ceilings. Opt-in `cooperative` mode can tighten five-second MPC decisions within its supported action domain, while preserving the original raw guard and thermal limits. [Cooperative prediction and telemetry](COOPERATIVE_PREDICTION.md). `model` and `joint` indicate thermal-model readiness and joint-planner activation; `-1` indicates an unavailable temperature prediction. See [forecast telemetry and fallback](../results/point-model-observations/README.md#runtime-and-telemetry).
 
 `--telemetry FILE` creates a **new** file with mode `0600`; existing files, symlinks, hardlinks, FIFOs and devices are rejected instead of appended to. Choose a fresh filename for each run. `--telemetry -` writes to stdout, so ordinary shell redirection can create a user-owned log. Use an output directory you trust; log size is not rotated or capped automatically.
 

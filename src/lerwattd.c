@@ -56,6 +56,8 @@ static void usage(FILE *out)
 		"                     thermal model with predictive ceilings\n"
 		"  --cross-cluster    jointly plan MPC ceilings (requires --policy mpc)\n"
 		"  --forecast temporal|adaptive  point forecast (default temporal; MPC only)\n"
+		"  --prediction nominal|cooperative  MPC predictor (default nominal); cooperative\n"
+		"                     uses action-supported five-second corrections conservatively\n"
 		"  --describe         print the discovered system and exit\n"
 		"  --check            check hardware capabilities without changing settings\n"
 		"  --temperature-sensor PATH  explicitly select a CPU/package sensor (millidegC)\n"
@@ -235,6 +237,7 @@ int main(int argc, char **argv)
 		{ "policy", required_argument, NULL, 'P' },
 		{ "cross-cluster", no_argument, NULL, 'G' },
 		{ "forecast", required_argument, NULL, 'F' },
+		{ "prediction", required_argument, NULL, 'A' },
 		{ "describe", no_argument, NULL, 'D' },
 		{ "check", no_argument, NULL, 'C' },
 		{ "temperature-sensor", required_argument, NULL, 'S' },
@@ -253,6 +256,7 @@ int main(int argc, char **argv)
 	bool cross_cluster = false;
 	bool check = false, actuator_ready = false, started = false;
 	bool temporal_forecast = true;
+	bool cooperative_prediction = false;
 	bool watchdog = false, checkpoint_loaded = false;
 	struct lw_notify notifier = { .fd = -1 };
 	static struct lw_system sys;
@@ -310,6 +314,13 @@ int main(int argc, char **argv)
 			}
 			temporal_forecast = !strcmp(optarg, "temporal");
 			break;
+		case 'A':
+			if (strcmp(optarg, "nominal") && strcmp(optarg, "cooperative")) {
+				usage(stderr);
+				return 1;
+			}
+			cooperative_prediction = !strcmp(optarg, "cooperative");
+			break;
 		case 'P':
 			if (strcmp(optarg, "rule") && strcmp(optarg, "mpc")) {
 				usage(stderr);
@@ -343,6 +354,10 @@ int main(int argc, char **argv)
 	}
 	if (period_ms < 10 || period_ms > 10000) {
 		fprintf(stderr, "lerwatt: --period-ms must be 10..10000\n");
+		return 1;
+	}
+	if (cooperative_prediction && (policy != LW_POLICY_MPC || !temporal_forecast || period_ms > 100)) {
+		fprintf(stderr, "lerwatt: cooperative prediction requires --policy mpc --forecast temporal and period 10..100 ms\n");
 		return 1;
 	}
 	if ((watchdog || model_path) && (dry_run || describe || check || restore)) {
@@ -433,6 +448,7 @@ int main(int argc, char **argv)
 	params.policy = policy;
 	params.cross_cluster = cross_cluster;
 	params.temporal_forecast = temporal_forecast;
+	params.cooperative_prediction = cooperative_prediction;
 	if (policy == LW_POLICY_MPC && sys.package_zone < 0)
 		fprintf(stderr, "lerwatt: no package zone: --policy mpc stays on the rule policy\n");
 	if (soft_c > 0)
@@ -584,6 +600,9 @@ int main(int argc, char **argv)
 				.temp_mc = cluster_temp(&sys, &s, i),
 				.busy_mean = s.busy_mean[i],
 				.cur_khz = s.cur_khz[i],
+				.effective_max_khz = s.max_khz[i],
+				.allowed_max_khz = act.orig_max[i],
+				.power_quality = p->have_em ? LW_POWER_ENERGY_MODEL : LW_POWER_PROXY,
 				.ncpus = p->ncpus,
 				.opps = p->opps,
 				.nopps = p->nopps,
@@ -633,7 +652,7 @@ int main(int argc, char **argv)
 					"\"ceil_mhz\":%u,\"budget_w\":%.3f,\"est_w\":%.3f,\"price\":%u,"
 					"\"floor_mhz\":%u,\"em\":%s,\"model\":%s,\"joint\":%s,\"pred_c\":%.1f,\"forecast_c\":%.3f,"
 					"\"forecast_source\":\"%s\",\"forecast_labels\":%llu,\"forecast_dropped\":%llu,\"forecast_weights\":[%.5f,%.5f,%.5f],"
-					"\"forecast_base_c\":%.3f,\"forecast_correction_c\":%.3f,\"temporal_labels\":%llu,\"temporal_dropped\":%llu}",
+					"\"forecast_base_c\":%.3f,\"forecast_correction_c\":%.3f,\"temporal_labels\":%llu,\"temporal_dropped\":%llu,\"prediction_mode\":\"%s\",\"prediction_queries\":%llu,\"prediction_corrections\":%llu,\"prediction_reason\":\"%s\",\"prediction_nominal_c\":%.3f,\"prediction_upper_c\":%.3f,\"prediction_epoch_resets\":%llu,\"observed_max_mhz\":%u}",
 					i ? "," : "", i, in.temp_mc == INT32_MIN ? -1.0 : in.temp_mc / 1000.0,
 					in.busy_mean, in.cur_khz / 1000, o.ceiling_khz / 1000, o.budget_w,
 					o.est_power_w, o.price_milli, o.floor_khz / 1000,
@@ -651,7 +670,13 @@ int main(int argc, char **argv)
 					o.forecast_weights[0], o.forecast_weights[1], o.forecast_weights[2],
 					isnan(o.forecast_base_c) ? -1.0 : o.forecast_base_c,
 					o.forecast_correction_c, (unsigned long long)o.temporal_labels,
-					(unsigned long long)o.temporal_dropped);
+					(unsigned long long)o.temporal_dropped,
+					cooperative_prediction ? "cooperative" : "nominal",
+					(unsigned long long)o.prediction_queries, (unsigned long long)o.prediction_corrections,
+					lw_prediction_reason_name(o.prediction_reason),
+					isfinite(o.prediction_nominal_c) ? o.prediction_nominal_c : -1.0,
+					isfinite(o.prediction_upper_c) ? o.prediction_upper_c : -1.0,
+					(unsigned long long)st[i].predictor.support.resets, s.max_khz[i] / 1000);
 		}
 		if (tel) {
 			fprintf(tel, "]}\n");

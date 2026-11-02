@@ -63,6 +63,7 @@ def main():
     parser.add_argument("--daemon", default="build/lerwattd-standalone")
     parser.add_argument("--with-lertick", action="store_true",
                         help="install BPF-capable optional coordination; absent peer must remain independent")
+    parser.add_argument("--prediction", choices=("nominal", "cooperative"), default="nominal")
     options = parser.parse_args()
     if not options.allow_systemd_test or sys.platform != "linux" or os.geteuid() != 0 or not virtual_machine():
         parser.error("requires explicit --allow-systemd-test as root in a disposable QEMU/KVM VM")
@@ -148,6 +149,7 @@ def main():
     result = {}
     try:
         install_arguments = ["--lertick"] if options.with_lertick else []
+        install_arguments += ["--prediction", options.prediction]
         installed = call(str(helper), "install", *install_arguments, env=environment)
         assert "running continuously" in installed.stdout, installed.stdout + installed.stderr
         pid = wait_for(healthy, "service never became ready")
@@ -156,6 +158,8 @@ def main():
         command = Path(f"/proc/{pid}/cmdline").read_bytes().split(b"\0")
         duration = command.index(b"--duration")
         assert command[duration + 1] == b"0" and b"--watchdog" in command
+        prediction = command.index(b"--prediction")
+        assert command[prediction + 1].decode() == options.prediction
         if options.with_lertick:
             assert b"--no-contract" not in command
             assert "contract=auto" in (work / "config/lerwatt.conf").read_text()

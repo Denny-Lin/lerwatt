@@ -88,6 +88,7 @@ struct lw_sample {
 	double busy_mean[LW_MAX_POLICIES];	/* 0..1 over the period */
 	double busy_max[LW_MAX_POLICIES];
 	uint32_t cur_khz[LW_MAX_POLICIES];
+	uint32_t max_khz[LW_MAX_POLICIES]; /* current policy constraint, not actual frequency */
 	double power_w;			/* board power if measured, else EM estimate */
 	bool power_measured;
 };

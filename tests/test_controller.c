@@ -45,15 +45,15 @@ int main(void)
 	for (int k = 0; k < 3; k++) {
 		double own = k ? 6 : 8;
 
-		lw_tm_init(&st[k].tm);
-		st[k].tm.samples = 100;
-		st[k].tm.theta[0] = .05;
-		st[k].tm.theta[1] = -.01;
-		st[k].tm.theta[2] = .25;
-		st[k].tm.have_prev = true;
-		st[k].tm.offset_avg_c = st[k].tm.peak_offset_c = 5;
-		st[k].tm.power_avg_w = st[k].tm.peak_power_w = own;
-		st[k].tm.hot_s = 100;
+		lw_tm_init(&st[k].predictor.thermal);
+		st[k].predictor.thermal.samples = 100;
+		st[k].predictor.thermal.theta[0] = .05;
+		st[k].predictor.thermal.theta[1] = -.01;
+		st[k].predictor.thermal.theta[2] = .25;
+		st[k].predictor.thermal.have_prev = true;
+		st[k].predictor.thermal.offset_avg_c = st[k].predictor.thermal.peak_offset_c = 5;
+		st[k].predictor.thermal.power_avg_w = st[k].predictor.thermal.peak_power_w = own;
+		st[k].predictor.thermal.hot_s = 100;
 		st[k].mpc_busy_init = true;
 		st[k].mpc_busy = st[k].mpc_peak_busy = 1;
 		st[k].mpc_work_khz = 2400000;

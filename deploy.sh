@@ -25,10 +25,10 @@ Usage: ./deploy.sh COMMAND [OPTIONS]
   help          Show this help.
 
 check, preview and run accept:
-  --policy rule|mpc          --duration SECONDS
+  --policy rule|mpc          --prediction nominal|cooperative          --duration SECONDS
   --period-ms MILLISECONDS   --soft-limit CELSIUS
   --temperature-sensor PATH  --telemetry FILE
-install also accepts --policy, --period-ms, --soft-limit and
+install also accepts --policy, --prediction, --period-ms, --soft-limit and
 --temperature-sensor to configure the persistent service.
   --lertick                 Enable optional Lertick coordination (BPF build).
   --no-lertick              Disable coordination (default for a new install).
@@ -111,6 +111,7 @@ validate_value()
     fi
     case $1 in
         --policy) case $2 in rule|mpc) ;; *) fail '--policy must be rule or mpc' ;; esac ;;
+        --prediction) case $2 in nominal|cooperative) ;; *) fail '--prediction must be nominal or cooperative' ;; esac ;;
         --duration|--period-ms)
             case $2 in *[!0-9]*) fail "$1 must be a positive integer" ;; esac
             [ "$2" -gt 0 ] 2>/dev/null || fail "$1 must be a positive integer"
@@ -133,10 +134,10 @@ validate_options()
                 case $1 in --lertick) value=auto ;; *) value=off ;; esac
                 [ -z "$install_contract" ] || [ "$install_contract" = "$value" ] || fail 'choose only one of --lertick and --no-lertick'
                 install_contract=$value; shift; continue ;;
-            --policy|--duration|--period-ms|--soft-limit|--temperature-sensor|--telemetry)
+            --policy|--prediction|--duration|--period-ms|--soft-limit|--temperature-sensor|--telemetry)
                 [ "$#" -ge 2 ] || fail "$1 needs a value"
                 option=$1; value=$2; shift 2 ;;
-            --policy=*|--duration=*|--period-ms=*|--soft-limit=*|--temperature-sensor=*|--telemetry=*)
+            --policy=*|--prediction=*|--duration=*|--period-ms=*|--soft-limit=*|--temperature-sensor=*|--telemetry=*)
                 option=${1%%=*}; value=${1#*=}; shift ;;
             *) fail "unsupported option: $1 (hardware root is fixed)" ;;
         esac
@@ -242,7 +243,7 @@ check_competing_services()
 }
 load_service_config()
 {
-    service_policy=mpc; service_period=100; service_soft=auto; service_sensor=auto; service_contract=off
+    service_policy=mpc; service_prediction=nominal; service_period=100; service_soft=auto; service_sensor=auto; service_contract=off
     if [ -e "$config" ] || [ -L "$config" ]; then
         trusted_root_path "$config"
         [ -f "$config" ] && [ ! -L "$config" ] || fail 'service config must be a regular file'
@@ -253,6 +254,7 @@ load_service_config()
             case $config_line in *=*) key=${config_line%%=*}; value=${config_line#*=} ;; *) fail 'service config requires KEY=VALUE lines' ;; esac
             case $key in
                 policy) validate_value --policy "$value"; service_policy=$value ;;
+                prediction) validate_value --prediction "$value"; service_prediction=$value ;;
                 period_ms) validate_value --period-ms "$value"; service_period=$value ;;
                 soft_limit_c) if [ "$value" != auto ]; then validate_value --soft-limit "$value"; fi; service_soft=$value ;;
                 temperature_sensor) if [ "$value" != auto ]; then validate_value --temperature-sensor "$value"; fi; service_sensor=$value ;;
@@ -265,6 +267,10 @@ load_service_config()
 }
 validate_service_mode()
 {
+    if [ "$service_prediction" = cooperative ]; then
+        [ "$service_policy" = mpc ] || fail 'cooperative prediction requires policy=mpc'
+        [ "$service_period" -le 100 ] || fail 'cooperative prediction requires period_ms=10..100'
+    fi
     if [ "$service_contract" = auto ]; then
         [ "$service_period" -le 100 ] || fail 'Lertick coordination requires period_ms=10..100; choose --period-ms 100 or disable coordination'
     fi
@@ -279,6 +285,7 @@ service_overrides()
         case $1 in *=*) option=${1%%=*}; value=${1#*=}; shift ;; *) option=$1; value=$2; shift 2 ;; esac
         case $option in
             --policy) service_policy=$value ;;
+            --prediction) service_prediction=$value ;;
             --period-ms) service_period=$value ;;
             --soft-limit) service_soft=$value ;;
             --temperature-sensor) service_sensor=$value ;;
@@ -316,8 +323,8 @@ write_service_files()
     chmod 700 "$config_dir" "$state_dir"
     trusted_root_path "$config_dir"; trusted_root_path "$state_dir"
     config_tmp=$(mktemp "$config_dir/.config.XXXXXX")
-    printf '# Lerwatt persistent service configuration. Strict KEY=VALUE; no shell syntax.\npolicy=%s\nperiod_ms=%s\nsoft_limit_c=%s\ntemperature_sensor=%s\ncontract=%s\n' \
-        "$service_policy" "$service_period" "$service_soft" "$service_sensor" "$service_contract" > "$config_tmp"
+    printf '# Lerwatt persistent service configuration. Strict KEY=VALUE; no shell syntax.\npolicy=%s\nprediction=%s\nperiod_ms=%s\nsoft_limit_c=%s\ntemperature_sensor=%s\ncontract=%s\n' \
+        "$service_policy" "$service_prediction" "$service_period" "$service_soft" "$service_sensor" "$service_contract" > "$config_tmp"
     chmod 600 "$config_tmp"
     mv -f "$config_tmp" "$config"
     # Escape unit quoting and percent specifiers. The executable token is
@@ -404,7 +411,7 @@ case $command in
         if [ "$command" = service-restore ]; then exec "$daemon" --sysroot / --no-contract --restore; fi
         require_systemd; check_competing_services; load_service_config
         require_contract_capability
-        set -- --sysroot / --policy "$service_policy" --period-ms "$service_period"
+        set -- --sysroot / --policy "$service_policy" --prediction "$service_prediction" --period-ms "$service_period"
         if [ "$service_contract" = off ]; then set -- "$@" --no-contract; fi
         if [ "$service_soft" != auto ]; then set -- "$@" --soft-limit "$service_soft"; fi
         if [ "$service_sensor" != auto ]; then set -- "$@" --temperature-sensor "$service_sensor"; fi
@@ -426,7 +433,7 @@ case $command in
                 service_contract=$install_contract
                 require_contract_capability
                 # Check requested inputs before stopping/replacing a running service.
-                set -- --policy "$service_policy" --period-ms "$service_period"
+                set -- --policy "$service_policy" --prediction "$service_prediction" --period-ms "$service_period"
                 if [ "$service_soft" != auto ]; then set -- "$@" --soft-limit "$service_soft"; fi
                 if [ "$service_sensor" != auto ]; then set -- "$@" --temperature-sensor "$service_sensor"; fi
                 "$daemon" --sysroot / --no-contract "$@" --check || fail 'hardware check failed; service was not installed'

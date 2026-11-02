@@ -22,7 +22,7 @@ VERSION ?= $(shell git describe --always --dirty 2>/dev/null || echo source)
 CPPFLAGS += -DLERWATT_VERSION=\"$(VERSION)\"
 
 HAL_SRCS := src/hal_fs.c src/hal_discover.c src/hal_sample.c src/hal_actuate.c
-CTL_SRCS := src/controller.c src/learn.c src/forecast.c src/temporal.c
+CTL_SRCS := src/controller.c src/learn.c src/forecast.c src/temporal.c src/predict.c
 D_SRCS   := $(HAL_SRCS) $(CTL_SRCS) src/contract.c src/notify.c src/checkpoint.c src/lerwattd.c
 SIM_SRCS := sim/platform_rk3588.c sim/model.c sim/abi.c sim/load.c src/contract.c sim/lerwatt_sim.c
 
@@ -99,13 +99,19 @@ $(BUILD)/test_forecast_feedback: tests/test_forecast_feedback.c src/forecast.c i
 $(BUILD)/test_controller: tests/test_controller.c $(CTL_SRCS) $(wildcard include/lerwatt/*.h) | $(BUILD)
 	$(CC) $(CFLAGS) -o $@ tests/test_controller.c $(CTL_SRCS) $(LDLIBS)
 
+$(BUILD)/test_predict: tests/test_predict.c $(CTL_SRCS) $(wildcard include/lerwatt/*.h) | $(BUILD)
+	$(CC) $(CFLAGS) -o $@ tests/test_predict.c $(CTL_SRCS) $(LDLIBS)
+
+$(BUILD)/test_cooperative_loop: tests/test_cooperative_loop.c sim/platform_rk3588.c sim/model.c $(CTL_SRCS) $(wildcard include/lerwatt/*.h sim/*.h) | $(BUILD)
+	$(CC) $(CFLAGS) -Isim -o $@ tests/test_cooperative_loop.c sim/platform_rk3588.c sim/model.c $(CTL_SRCS) $(LDLIBS)
+
 $(BUILD)/test_control_forecast: tests/test_control_forecast.c sim/platform_rk3588.c sim/model.c $(CTL_SRCS) $(wildcard include/lerwatt/*.h sim/*.h) | $(BUILD)
 	$(CC) $(CFLAGS) -Isim -o $@ tests/test_control_forecast.c sim/platform_rk3588.c sim/model.c $(CTL_SRCS) $(LDLIBS)
 
 $(BUILD)/test_temporal: tests/test_temporal.c src/temporal.c include/lerwatt/temporal.h include/lerwatt/forecast.h | $(BUILD)
 	$(CC) $(CFLAGS) -o $@ tests/test_temporal.c src/temporal.c $(LDLIBS)
 
-test: $(BUILD)/test_model $(BUILD)/test_learn $(BUILD)/test_forecast $(BUILD)/test_forecast_feedback $(BUILD)/test_temporal $(BUILD)/test_control_forecast $(BUILD)/test_controller $(BUILD)/test_closed_loop
+test: $(BUILD)/test_model $(BUILD)/test_learn $(BUILD)/test_forecast $(BUILD)/test_forecast_feedback $(BUILD)/test_temporal $(BUILD)/test_control_forecast $(BUILD)/test_controller $(BUILD)/test_predict $(BUILD)/test_cooperative_loop $(BUILD)/test_closed_loop
 	$(BUILD)/test_model
 	$(BUILD)/test_learn
 	$(BUILD)/test_forecast
@@ -113,10 +119,15 @@ test: $(BUILD)/test_model $(BUILD)/test_learn $(BUILD)/test_forecast $(BUILD)/te
 	$(BUILD)/test_temporal
 	python3 tests/test_runtime_forecast.py
 	python3 tests/test_runtime_summary.py
+	python3 tests/test_cooperative_summary.py
 	$(BUILD)/test_control_forecast --temporal --integrated --development
 	$(BUILD)/test_controller
+	$(BUILD)/test_predict
 	$(BUILD)/test_closed_loop
 	$(BUILD)/test_closed_loop --cross-cluster
+	$(BUILD)/test_closed_loop --cooperative
+	$(BUILD)/test_closed_loop --cooperative --cross-cluster
+	$(BUILD)/test_cooperative_loop --full
 
 e2e: all
 	tests/e2e.sh $(BUILD)

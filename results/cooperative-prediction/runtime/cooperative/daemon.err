@@ -1,0 +1,9 @@
+lerwatt: mode=simulation sysroot=/var/tmp/lerwatt-cooperative-runtime-final6/steps-bare-15C/root platform=rk3588
+lerwatt:   cluster 0 = policy0 cpus 0-3 cap 397, driver cpufreq-dt, governor schedutil, 5 OPPs 1008000-1800000 kHz, power Energy Model estimate, sensor /var/tmp/lerwatt-cooperative-runtime-final6/steps-bare-15C/root/sys/class/thermal/thermal_zone3/temp, 2 idle states
+lerwatt:   cluster 1 = policy4 cpus 4-5 cap 1024, driver cpufreq-dt, governor schedutil, 7 OPPs 1200000-2400000 kHz, power Energy Model estimate, sensor /var/tmp/lerwatt-cooperative-runtime-final6/steps-bare-15C/root/sys/class/thermal/thermal_zone1/temp, 2 idle states
+lerwatt:   cluster 2 = policy6 cpus 6-7 cap 1024, driver cpufreq-dt, governor schedutil, 7 OPPs 1200000-2400000 kHz, power Energy Model estimate, sensor /var/tmp/lerwatt-cooperative-runtime-final6/steps-bare-15C/root/sys/class/thermal/thermal_zone2/temp, 2 idle states
+lerwatt:   7 temperature inputs, 0 known CPU packages, package sensor package-thermal, meter ina226
+lerwatt: capability check passed (control file access; no values written)
+lerwatt: soft limit 80.0 degC, period 100 ms
+lerwatt: Lertick link off (0/3 matching policies; ABI 2)
+lerwatt: stopped after 180.0 s, 0 writes, 0 write errors

@@ -1,0 +1,64 @@
+{
+  "warmup_s": 120.0,
+  "horizon_s": 5,
+  "eligible": 1647,
+  "late_labels": 0,
+  "maximum_lateness_s": 0.107228678,
+  "first_feedback_s": 5.009,
+  "temporal_active_points": 200,
+  "metrics": {
+    "baseline": {
+      "n": 1647,
+      "mae_c": 0.534159684274438,
+      "rmse_c": 0.6694849296573082
+    },
+    "candidate": {
+      "n": 1647,
+      "mae_c": 0.5595185185185183,
+      "rmse_c": 0.697581730113555
+    }
+  },
+  "clusters": {
+    "0": {
+      "baseline": {
+        "n": 549,
+        "mae_c": 0.5978870673952638,
+        "rmse_c": 0.71819671719534
+      },
+      "candidate": {
+        "n": 549,
+        "mae_c": 0.6483861566484516,
+        "rmse_c": 0.7735040371234435
+      }
+    },
+    "1": {
+      "baseline": {
+        "n": 549,
+        "mae_c": 0.5024462659380692,
+        "rmse_c": 0.6438197077048385
+      },
+      "candidate": {
+        "n": 549,
+        "mae_c": 0.5280236794171218,
+        "rmse_c": 0.6687543963391571
+      }
+    },
+    "2": {
+      "baseline": {
+        "n": 549,
+        "mae_c": 0.5021457194899814,
+        "rmse_c": 0.6436768385575528
+      },
+      "candidate": {
+        "n": 549,
+        "mae_c": 0.5021457194899814,
+        "rmse_c": 0.6436768385575528
+      }
+    }
+  },
+  "limits": [
+    "One simulated board through the real daemon/file ABI; no hardware accuracy claim.",
+    "First later sensor label within 250ms; no interpolation or future data at issue time.",
+    "Overlapping five-second forecasts are correlated; no per-point confidence interval."
+  ]
+}

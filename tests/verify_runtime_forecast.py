@@ -139,7 +139,7 @@ def stop(process):
             process.wait(timeout=10)
 
 
-def run_case(output, name, duration, warmup):
+def run_case(output, name, duration, warmup, prediction="nominal"):
     directory = output / name
     directory.mkdir()
     root = directory / "root"
@@ -153,7 +153,8 @@ def run_case(output, name, duration, warmup):
                    "--cooling", cooling, "--ambient", str(ambient), "--seed", str(seed), "--no-cpuperf",
                    "--duration", str(duration + 20), "--log", str(directory / "truth.jsonl")]
     daemon_command = [str(ROOT / "build/lerwattd"), "--sysroot", str(root), "--no-contract", "--policy", "mpc",
-                      "--forecast", "temporal", "--duration", str(duration), "--telemetry", str(directory / "telemetry.jsonl")]
+                      "--forecast", "temporal", "--prediction", prediction,
+                      "--duration", str(duration), "--telemetry", str(directory / "telemetry.jsonl")]
     evidence = {"case": name, "simulation": True, "simulator_command": sim_command,
                 "daemon_command": daemon_command, "started_unix": time.time(), "completed": False}
     save(directory / "run.json", evidence)
@@ -190,6 +191,14 @@ def run_case(output, name, duration, warmup):
             # Offline JSON scoring must not extend the uncontrolled hot tail.
             stop(sim)
             result = score(directory / "telemetry.jsonl", warmup)
+            telemetry = [json.loads(line) for line in (directory / "telemetry.jsonl").read_text().splitlines()]
+            evidence["prediction_mode"] = prediction
+            evidence["model_ready_rows"] = sum(any(c["model"] for c in row["clusters"]) for row in telemetry)
+            evidence["correction_queries"] = sum(c["prediction_corrections"] for c in telemetry[-1]["clusters"])
+            evidence["all_rows_have_prediction_mode"] = all(c["prediction_mode"] == prediction
+                for row in telemetry for c in row["clusters"])
+            if not evidence["all_rows_have_prediction_mode"]:
+                raise RuntimeError("incorrect prediction mode in daemon telemetry")
             if kind in ("periodic", "sine", "phase") and not result["temporal_active_points"]:
                 raise RuntimeError("temporal correction never activated on a periodic confirmation case")
             save(directory / "scores.json", result)
@@ -224,6 +233,7 @@ def main():
     parser.add_argument("--warmup", type=float, default=300)
     parser.add_argument("--cases", default=",".join(CASES))
     parser.add_argument("--smoke", action="store_true")
+    parser.add_argument("--prediction", choices=("nominal", "cooperative"), default="nominal")
     args = parser.parse_args()
     if args.score:
         print(json.dumps(score(args.score, args.warmup), indent=2))
@@ -245,10 +255,11 @@ def main():
     files = [ROOT / "build/lerwattd", ROOT / "build/lerwatt-sim", Path(__file__).resolve()]
     save(output / "environment.json", {"kernel": os.uname().release, "architecture": os.uname().machine,
          "duration_s": args.duration, "warmup_s": args.warmup, "cases": names, "smoke_only": args.smoke,
+         "prediction": args.prediction,
          "sha256": {str(p): hashlib.sha256(p.read_bytes()).hexdigest() for p in files}})
     for name in names:
         print(f"START runtime {name}", flush=True)
-        run_case(output, name, args.duration, args.warmup)
+        run_case(output, name, args.duration, args.warmup, args.prediction)
         print(f"PASS runtime {name}", flush=True)
 
 

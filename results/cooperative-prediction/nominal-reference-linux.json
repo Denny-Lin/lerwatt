@@ -1,0 +1,13 @@
+{
+  "baseline": "953a11ee88f53ff9cc5593550f528303047c797e",
+  "original_sources": {
+    "controller.c": "1bddc374b4e380451203f3d48e2204e481e8586c71b56067e6cbd6b9107a7e9a",
+    "learn.c": "8a5fbfc6c93f48f3e40a7abf1b2259c3b1070cdf58bc3a14079fce6402162d64",
+    "forecast.c": "21265a764056780555e32f03de4f4d2db0a82ed16557ec5e855b1ef7405c815e",
+    "temporal.c": "5a73c46bb8c16857ecaaa1c8725ed54bd3a2033f86ff5bb3d1982e77632d3f64"
+  },
+  "differences": [],
+  "matched_nominal_cases": 30,
+  "passed": true,
+  "scope": "Same-platform original vs nominal; not cross-platform bitwise reproducibility or performance gain."
+}

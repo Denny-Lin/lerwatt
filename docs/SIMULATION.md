@@ -107,7 +107,7 @@ Full textual outputs are preserved in [results/thermal-control](../results/therm
 
 ### Equal temperature settings
 
-All controllers now use the same 80 C soft limit, 81 C filtered decision line
+The Lerwatt rule and MPC controllers use the same 80 C soft limit, 81 C filtered decision line
 and raw-temperature guard at 82 C (the passive trip minus 3 C). MPC no longer
 uses the earlier, higher 82 C filtered line. The guard immediately caps to
 the configured minimum ceiling, rather than waiting for the temperature EMA
@@ -330,3 +330,28 @@ integer-valued restoration check, full case records and raw-data hashes.
 3. Apply power steps and fit the two time constants per cluster (hot spot, die) and the die-to-ambient resistance.
 4. Write the fitted values into a new platform profile and replay the same traces in the simulator. Acceptance: temperature RMSE under 1.5 C and mean power error under 5% on held-out workloads.
 5. From then on the simulator is a calibrated twin of that board, and every result needs a matching board run before it is reported.
+
+### Cooperative prediction and completed work
+
+An opt-in `--prediction cooperative` path now uses action-supported point
+forecasts to tighten MPC decisions through a replaceable prediction interface.
+Nominal mode retains the historical reports exactly. The new finite FIFO
+comparison drains every job and reports makespan, p99, modeled board energy,
+forecast error and frequency activity; it does not reuse the historical
+`served` ratio as a job-completion metric.
+
+The first 30 paired development comparisons completed all 2,880 jobs per run,
+with sensor peaks no higher than 82.23 C and no simulated throttling. Twenty-eight
+pairs had identical control/forecast outcomes. Two ambient-ramp independent-MPC
+pairs used a corrected query and changed outcomes slightly: makespan rose by
+0.02 and 0.07 s, while modeled board energy fell by about 0.0041% and 0.0021%.
+These small simulated differences are not demonstrated power savings. The
+strict nonregression gate fails, and the new prediction mode remains opt-in.
+See [all measurements, failures and limitations](../results/cooperative-prediction/README.md).
+
+The historical `served` ratio integrates `min(requested rate, available rate)`
+without carrying an unserved backlog. It is not a real application completion
+rate. The stock-like comparison also retains its kernel 85 C passive trip; it
+is not an equal-soft-temperature comparison against Lerwatt. The new finite-job
+A/B comparison isolates nominal versus cooperative MPC, not superiority over
+stock Linux.
