@@ -6,64 +6,114 @@ contract are implemented. Both independent operation and three-cluster
 coordination have been exercised in an eight-vCPU ARM64 VM. Frequencies,
 power and temperature are simulated; real-board behavior remains unverified.
 See [Simulation](SIMULATION.md) for the current measurements and regressions.
-The source study below refers to the [Linux v7.3 tag](https://github.com/torvalds/linux/tree/v7.3)
+The original source study used [Linux v7.3](https://github.com/torvalds/linux/tree/v7.3)
 and [sched-ext/scx](https://github.com/sched-ext/scx) as of 2026-10-30.
+That is a source reference, not a minimum kernel version or a claim of
+compatibility with every driver. Standalone Lerwatt does not require
+sched_ext; Lertick integration has separate kernel and BPF requirements.
+`deploy.sh` builds a BPF-free native daemon on the target Linux machine and
+provides checks, non-actuating preview, supervised foreground trials and
+installation/removal. It never starts QEMU or requires simulator files.
 
-Labels: **[upstream]** = present in Linux v7.3; **[RFC]** = posted to a mailing list, not merged; **[proposal]** = Lerwatt design, not yet tested.
+Labels below distinguish **implemented**, **upstream interface**, and
+**planned**. An available Linux interface is not an implemented Lerwatt backend.
 
 ## 1. Principle: replace policy, keep mechanism
 
-Linux spreads CPU power policy across schedutil, EAS, cpuidle governors, thermal governors, powercap and driver preferences. Only two of those decide on every event: the frequency request in schedutil and the idle-state choice in the cpuidle governor. Everything else acts on tens of milliseconds or slower, which a userspace controller can own.
+Linux separates frequency requests, idle-state selection, task placement,
+thermal mitigation and device power management. Their decision times differ:
+CPUIdle selects a state at idle entry, schedutil reacts to scheduler updates,
+and EAS makes placement decisions at task wakeup. A userspace control period
+does not replace all of those event-driven decisions.
 
-| Policy | v7.3 location | Lerwatt treatment |
+Here, **replacement** means that the normal decision path delegates a named
+policy to the new controller; the original policy may remain an explicit
+fallback. A controller that only limits another governor's choices
+**constrains** that governor. Current Lerwatt implements the latter for CPU
+frequency and idle latency.
+
+| Policy | Linux decision or interface | Current authority |
 | --- | --- | --- |
-| Utilization-to-frequency mapping and 1.25× headroom | `sugov_get_util()`, `map_util_perf()` [upstream] | **Replaced.** With sched_ext running all tasks, schedutil starts from `scx_cpuperf_target()` and ignores fair-class utilization. Lertick sets that target. |
-| Wake-up placement by energy (EAS) | `find_energy_efficient_cpu()` [upstream] | **Replaced** by Lertick's BPF placement for sched_ext tasks. |
-| Power-allocator (IPA) PID and power split | `gov_power_allocator.c` [upstream] | **Replaced** by Lerwatt's budget controller; the kernel's critical trips stay armed. |
-| Cluster power capping (DTPM) | `dtpm_cpu.c` `set_pd_power_limit()` [upstream] | **Replaced** by the same Energy-Model-to-ceiling mapping inside Lerwatt (RK3588 has no upstream DTPM hierarchy). |
-| Frequency floors and ceilings | frequency QoS, `scaling_{min,max}_freq` [upstream] | **Owned** by Lerwatt. |
-| Idle depth | `cpuidle_governor_latency_req()`, `stateN/disable` [upstream] | **Constrained** by Lerwatt; per-entry choice stays in menu/teo. |
-| Per-entry idle-state choice | `menu_select()`, `teo_select()` [upstream] | **Untouched.** A BPF cpuidle governor exists only as an [RFC](https://lwn.net/Articles/1035643). |
-| Voltage | `_set_opp()` in `drivers/opp/core.c`, firmware [upstream] | **Untouched.** Voltage follows the chosen OPP. |
-| Critical and hot trips, hardware throttling | `handle_critical_trips()`, `hw_pressure` [upstream] | **Untouched.** |
+| Frequency request | schedutil and the CPUFreq driver | Lerwatt writes limits, not each frequency request. With compatible schedutil operation, Lertick supplies a `cpuperf` input; schedutil and the driver still process it. |
+| Frequency envelope | `scaling_min_freq`, `scaling_max_freq` | Lerwatt never raises the initial maximum. A lower ceiling can lower an existing minimum to preserve min ≤ max. Kernel/firmware constraints can be tighter; other writers are not arbitrated yet. |
+| Energy-aware task placement | EAS `find_energy_efficient_cpu()` | Fair-class EAS does not place sched_ext tasks. Lertick uses its existing fixed CPU-selection policy, not learned energy-aware placement. |
+| Thermal cooling policy | step_wise, power_allocator and cooling-device bindings | Lerwatt adds CPUFreq constraints; it does not select a thermal governor or take over its cooling-device actions. |
+| Power-domain budgets | powercap, RAPL, DTPM | No Lerwatt backend writes these interfaces. An estimated power-to-frequency mapping is not DTPM or hardware power-cap enforcement. |
+| Idle-state choice | CPUIdle menu/TEO governors | Lerwatt constrains resume latency through PM QoS. It does not choose a state at each idle entry or write `stateN/disable`. |
+| Hardware execution and protection | CPUFreq/CPUIdle drivers, OPP/regulators, firmware, thermal trips | Retained. Lerwatt does not write voltage, disable thermal zones or change trip temperatures. |
+
+Both [menu and TEO](https://docs.kernel.org/admin-guide/pm/cpuidle.html) already
+adapt their statistics to observations. Likewise, Linux thermal policies use
+feedback. A proposed learned controller must be compared with those adaptive
+policies, not described as introducing adaptation to otherwise fixed Linux
+algorithms.
 
 ## 2. Two controllers, two timescales
 
 | | Lertick (scheduling) | Lerwatt (power) |
 | --- | --- | --- |
 | Runs in | sched_ext BPF, with a userspace loader | Userspace daemon |
-| Period | Every scheduling event; model updates per completed burst | 100 ms control loop; joint allocations held for 120 s |
-| Decides | Placement, slices, per-CPU `cpuperf` target | Per-cluster ceilings and floors, energy prices and idle-latency limits |
-| Observes | Task bursts, queue depth, wake latency | Temperatures, measured energy, frequency residency, Lertick's demand forecast |
+| Timing | Scheduling callbacks; burst-model updates on eligible completed episodes | Default 100 ms loop; optional joint replanning normally held for 120 s, with a raw-temperature override |
+| Decides | Fixed placement/dispatch policies; learned bounded slices; utilization-based `cpuperf` targets with optional contract constraints | Per-policy frequency ceilings/floors, contract prices and PM QoS resume-latency constraints |
+| Inputs | Task bursts, queue depth, CPU service and wake-latency observations | Thermal-zone readings, `/proc/stat` busy time, `scaling_cur_freq`, discovered power estimates and fresh `lat_crit_milli` |
 
-The 10× to 100× separation is deliberate. Lerwatt sees Lertick's behaviour as a fast inner loop that has already settled, and Lertick sees Lerwatt's prices as constants between updates. This is the standard condition for stable hierarchical control, and it keeps the two learners from chasing each other.
+Lerwatt also reports power from a discovered hwmon `power1_input`, or an
+estimate when that is absent. This telemetry is not a measured-energy input
+to the current thermal fit; the fit uses estimated per-cluster power.
+Frequency residency and the contract's utilization/P99 fields are not current
+controller inputs.
+
+Timescale separation, hysteresis and held allocations are engineering measures
+intended to reduce oscillation. They do not establish that an inner loop has
+settled or prove closed-loop stability. Sensor delay, changing workloads,
+CPUFreq rate limits and coupled hardware domains still require evaluation.
 
 ## 3. The implemented contract
 
-Lertick owns two pinned BPF array maps under `/sys/fs/bpf/lertick/`. Both are created with `BPF_F_MMAPABLE` so Lerwatt reads and writes them through `mmap()` without system calls on the hot path. A sequence counter guards each record.
+When its `--lerwatt` option is enabled, Lertick creates and pins two BPF array
+maps under `/sys/fs/bpf/lertick/`. They use `BPF_F_MMAPABLE`; Lerwatt opens and
+maps them through raw BPF syscalls, without a libbpf dependency. Records have
+one designated writer, a sequence counter and an ABI version. This is not a
+transaction across clusters or a synchronized global snapshot. Lertick's BPF
+reader uses compiler barriers and tolerates a mixed-period copy after field
+clamping; the contract must not be treated as a hard safety interlock.
 
 **`lw_contract` (written by Lerwatt, read by Lertick per event), one record per cluster:**
 
 | Field | Meaning |
 | --- | --- |
 | `seq` | Even when stable, odd while being written |
-| `ceiling_cap` | Highest capacity Lertick may request on this cluster (0–1024 scale) |
+| `version` | Shared record-layout version |
+| `ceiling_cap` | Nonzero upper bound on Lertick's target, on the 0–1024 capacity scale; zero means no contract ceiling |
 | `floor_cap` | Lowest capacity to request while latency-critical work runs |
-| `energy_price_milli` | Cost per unit of capacity, fixed-point; rises when the cluster is over budget |
-| `thermal_headroom_mc` | Degrees below Lerwatt's own soft limit |
-| `valid_until_ns` | Lertick ignores the record after this time and falls back to defaults |
+| `energy_price_milli` | Normalized price, 0–1000; currently a fixed ramp as temperature approaches the soft limit |
+| `thermal_headroom_mc` | Soft limit minus observed zone temperature, in millidegrees C |
+| `valid_until_ns` | Monotonic-clock expiry; normally three Lerwatt periods after publication |
 
 **`lt_demand` (written by Lertick, read by Lerwatt each period), one record per cluster:**
 
 | Field | Meaning |
 | --- | --- |
 | `seq` | As above |
-| `pred_util` | Aggregated cluster demand estimate, refreshed every 100 ms |
-| `lat_crit_milli` | Share of demand from latency-critical tasks |
+| `version` | Shared record-layout version |
+| `pred_util` | Smoothed per-CPU utilization, averaged by cluster; publication targets 100 ms |
+| `lat_crit_milli` | Share of sched_ext CPU runtime classified as latency-critical, 0–1000 |
 | `cpuperf_max`, `cpuperf_mean` | Maximum and mean targets published for the cluster |
-| `p99_wake_ns` | Recent wake-latency estimate |
+| `p99_wake_ns` | Upper edge of the log2 histogram bucket containing the wake-latency P99; not an application SLO measurement |
+| `updated_ns` | Monotonic-clock freshness timestamp |
 
-Lertick applies the energy price, floor and ceiling to its performance targets. Lerwatt publishes those limits and reads demand and latency-critical load. Fields have one writer each. Price-aware task placement is not implemented; CPU selection retains Lertick's existing policy.
+The current Lerwatt controller consumes only fresh `lat_crit_milli` from the
+demand record. The other fields are available for inspection/future control;
+they do not currently drive ceilings, idle constraints or an enforced P99
+target. The classifier itself is a fixed verified-wakeup/short-sleep/previous-
+burst heuristic in Lertick, not a learned latency classifier.
+
+In Lertick's utilization-target mode, price trims the target by at most 20%,
+the latency-critical floor is applied, then the nonzero ceiling and CPU
+capacity bound it. `--cpuperf max` does not send these requests, even if maps
+are attached. A CPUPerf target is an input to a compatible governor, not a
+measured frequency or a hardware watt cap. Price-aware placement is not
+implemented. See the [canonical record definition](../include/lerwatt/contract.h).
 
 ## 4. Algorithms
 
@@ -77,58 +127,228 @@ temperature, with discrete OPP hysteresis and slower recovery than descent.
 A raw-temperature guard bypasses that delay when the sensor reaches the
 passive trip minus 3 C.
 
-**Learned control.** `--policy mpc` fits package heating and cooling with
-recursive least squares and learns a cluster hot-spot offset. Five-second
-point forecasts are measured against future observations; they are distinct
-from conservative planning predictions. `--cross-cluster` searches a bounded
-product of discovered OPPs using all cluster models and total package power,
-then holds an allocation for its planning horizon. Untrained or unsupported
-systems keep independent rule/MPC control. Neither learning nor coordination
-is enabled by default because the recorded comparisons do not establish a
-consistent benefit in work and stability.
+**Learned dynamics and MPC.** `--policy mpc` fits package heating and cooling
+with recursive least squares and learns a cluster hot-spot offset. A
+deterministic planner uses that model to select ceilings; this is not a
+trained action-selection policy or reinforcement learning. Until the model
+is ready, rule control continues. `--cross-cluster` searches at most 65,536
+OPP combinations, using estimated CPU-cluster power, and normally holds a
+joint allocation for 120 seconds. Eligibility requires trained models,
+package/cluster readings and nonzero OPP power estimates. Those estimates
+can be relative proxies when no Energy Model was discovered; joint activation
+does not establish an accurate physical power model.
 
-**Shared objective for evaluation:** energy-delay product, subject to a p99 latency target and a temperature limit.
+**Point forecasts.** `forecast_c` predicts the sensor temperature five seconds
+ahead. The default temporal correction learns from completed future labels
+and retains its reference when evidence is weak; `--forecast adaptive` uses
+the earlier expert blend. These outputs and their delayed-label accuracy
+scores are separate from the conservative planning prediction `pred_c`.
+Changing the point forecaster does not change control decisions. The
+[six-case runtime confirmation](../results/point-model-observations/runtime/README.md)
+validates the real daemon against a simulated board's file ABI, not physical
+energy savings or a better MPC policy.
+
+Rule control remains the default; MPC and cross-cluster planning are opt-in.
+Contract discovery is enabled by default but is optional, and Lerwatt runs
+alone when maps are absent. The evaluation objective is energy-delay product
+subject to latency and thermal limits; the current daemon does not measure
+or enforce an application P99 constraint.
 
 ## 5. Safety envelope and fallback
 
-1. Allowed writes: `scaling_min_freq`, `scaling_max_freq`, `energy_performance_preference`, `power/pm_qos_resume_latency_us`, `cpuidle/stateN/disable`, and the contract map. Nothing else. The current code uses the first two cpufreq knobs, the resume-latency knob and the contract; it never loosens a limit it found in place.
-2. Every written value is clamped to the hardware range and to a configured minimum performance floor.
-3. Original values are saved at start and restored on exit, on signals, and by a service-manager stop hook if the daemon dies.
-4. If `valid_until_ns` expires, Lertick reverts to its own defaults; if Lertick unloads, schedutil returns to fair-class utilization automatically.
-5. The kernel's passive and critical trips remain armed. On RK3588 the upstream device tree sets passive trips at 85 °C and critical trips at 115 °C; Lerwatt's soft limit sits below the passive trip.
+1. Implemented actuation is limited to `scaling_min_freq`, `scaling_max_freq`,
+   per-CPU `power/pm_qos_resume_latency_us` and the contract map. EPP, individual
+   idle-state disable, fan/cooling-device state and powercap writes are not
+   implemented. CPUFreq targets are clamped to discovered hardware bounds and
+   never exceed the initial maximum. A lower ceiling can temporarily lower
+   an existing minimum; a frequency bound is not a performance SLO.
+2. The journal persists the original value before a knob's first write.
+   Failed persistence rolls back the in-memory entry; actuation stops at its
+   first error. Restoration validates the full journal before writing and
+   retains it on failure. Ceilings are restored before floors to avoid
+   applying an original minimum against a still-lowered cap.
+   Private journal opens reject symlinks, hardlinks and nonregular files
+   without blocking on FIFOs. An unrecovered startup journal prevents new control.
+3. Active daemon, manual restore and normal install/remove operations share
+   a nonblocking lifetime lock, retained through maintenance file changes.
+   Normal expiry and SIGINT/SIGTERM/SIGHUP attempt restoration. The
+   foreground deployment helper also waits for the child and attempts restore
+   after abnormal exit. If both are killed, manual `--restore` is still needed.
+   Per-CPU PM QoS and CPUFreq settings remain shared with other programs;
+   external writers and policy changes are not arbitrated by this lock.
+4. `--check`, `--describe` and `--dry-run` do not restore journals or create
+   runtime state. Dry-run also disables contract publication. Explicit
+   telemetry output can still create a new private log file. Existing files
+   and special files are rejected; stdout remains an explicit stream. The deployment
+   helper fixes the real-machine root and disables scheduler coordination.
+5. Expired contract records give neutral scheduler constraints; stale demand
+   stops influencing Lerwatt. This is availability fallback, not a fail-closed
+   thermal cap. Kernel passive/critical trips and hardware protections remain
+   independent. On the RK3588 reference profile the passive/critical trips are
+   85/115 C, with Lerwatt's default soft limit below the passive trip.
+
+The raw-temperature guard, bounds and tested recovery paths reduce risks;
+they are not a proof of production safety or stability under arbitrary model,
+sensor, hardware or control failures.
 
 ## 6. Interfaces and gaps
 
-All interfaces Lerwatt needs exist in v7.3: `scx_bpf_cpuperf_set()` and `scx_bpf_cpuperf_cap/cur()` in `kernel/sched/ext/ext.c`; frequency QoS through cpufreq sysfs; device resume-latency QoS and cpuidle state disable through sysfs; thermal zones through sysfs and thermal netlink; the Energy Model through debugfs or the energy-model generic-netlink family in `kernel/power/em_netlink.c`.
+The current HAL reads CPUFreq/CPUIdle sysfs, thermal zones, recognized Intel
+coretemp package/AMD Tdie hwmon temperatures, `/proc/stat`, Energy Model
+debugfs and the first discovered hwmon `power1_input`. It does
+not implement thermal/EM netlink, RAPL energy counters or general power-domain
+discovery. Complete EM tables require identified physical units: legacy
+milliwatts are converted, and version-dependent flags are not interpreted
+without checking their meaning for that kernel. Missing or unknown/abstract
+EM data uses a cubic relative-power proxy; an arbitrary
+hwmon power channel is not automatically a calibrated whole-board meter.
 
-Known gaps, none blocking:
+CPUFreq policy domains need not match thermal or hardware power domains.
+Current zone assignment follows cpufreq cooling-device names, falling back
+only to a selected package input. Single-package Intel/AMD inputs are
+recognized; ambiguous inputs require an explicit `--temperature-sensor`
+selection. Known multi-socket systems are rejected even with an override.
+Invalid/disabled trip values and hwmon faulted readings are not used.
+An unrelated hottest zone is not used as CPU temperature. Driver,
+governor, sensor paths and synthetic frequency candidates are reported by
+discovery. A capability check validates inputs/access without writing values;
+it does not prove hardware measurement accuracy or thermal behavior.
+`scaling_cur_freq` can be a last requested P-state rather than instantaneous
+hardware frequency. Intel HWP and AMD CPPC autonomous modes select performance
+in hardware within OS hints/limits; a CPUFreq knob is not control over that
+internal algorithm. See [CPUFreq](https://docs.kernel.org/admin-guide/pm/cpufreq.html),
+[intel_pstate](https://docs.kernel.org/admin-guide/pm/intel_pstate.html) and
+[amd_pstate](https://www.kernel.org/doc/html/latest/admin-guide/pm/amd-pstate.html).
 
-- sched_ext does not update `rq->cpu_capacity`, so a BPF scheduler must read `cpufreq_cpu_data` and `hw_pressure` itself; scx_lavd does this with `__ksym` in `power.bpf.c`. A small kfunc would be cleaner.
-- RK3588 has no upstream DTPM hierarchy; only RK3399 does (`drivers/soc/rockchip/dtpm.c`).
-- BPF frequency governor ([cpufreq_ext](https://www.phoronix.com/news/cpufreq_ext-RFC), 2024) and BPF cpuidle governor ([2025](https://lwn.net/Articles/1035643)) remain [RFC].
+Fixed implementation capacities are 256 CPU slots, 64 policies, 32 frequency
+candidates per policy, 16 zones and eight idle states. CPU/policy bounds,
+duplicate IDs and invalid frequency data are rejected. Missing tables use
+intermediate limit requests within the CPUFreq range, rather than just two
+endpoints that could prevent useful capping. These requests are not physical
+OPPs. The Lertick ABI still has eight cluster entries; larger standalone
+systems do not silently become coordinated. CPU hotplug/topology rediscovery
+and arbitration with other power managers are not implemented.
 
-## 7. Hardware and measurement
+EAS has its own platform prerequisites; enabling sched_ext does not provide
+a learned EAS equivalent. DTPM likewise requires a platform hierarchy and
+backends, not just the existence of powercap sysfs. Neither is a dependency
+of standalone Lerwatt. See [EAS](https://docs.kernel.org/scheduler/sched-energy.html)
+and [DTPM](https://docs.kernel.org/power/powercap/dtpm.html).
+
+## 7. Planned policy expansion and Linux delivery
+
+The table identifies possible decisions to learn, not existing Lerwatt
+features. Retain deterministic correctness, hardware constraints, lifecycle
+handling and independent safety enforcement in each path.
+
+Thermal response, future workload demand and idle/reuse intervals are useful
+prediction targets. A constrained optimizer can allocate budgets using those
+predictions; the optimizer and a single-writer coordinator do not themselves
+need to be AI. Explicit user choices, sleep inhibitors and fixed operating
+profiles can remain rules. No row below asserts that learning is necessary
+or already better than the existing policy.
+
+| Policy to investigate | Possible learning target | Retained mechanism / delivery boundary |
+| --- | --- | --- |
+| CPUFreq request selection | Future CPU demand and performance/energy response | Driver/OPP transitions and limits; optional native governor on compatible drivers |
+| CPUIdle per-entry state selection | Non-timer wakeups and useful idle duration | PM QoS, timer/tick rules and driver state entry; custom-kernel governor integration |
+| Energy-aware task placement | Per-CPU/domain execution cost and demand | Scheduling correctness and affinity; a Lertick policy extension, not current learned placement |
+| Active core count and SMT policy | Benefit of packing work or using more execution contexts | Affinity, CPU hotplug and platform constraints; not a universal core-parking governor |
+| Thermal cooling allocation | Thermal response and performance cost of cooling actors | Sensors, trips and cooling-device drivers; new kernel thermal policy or an explicitly delegated userspace policy |
+| Fan and platform-profile selection | Temperature/noise response and workload benefit | Supported hwmon/firmware controls and user preferences; some platforms expose profiles instead of direct fan control |
+| GPU/interconnect/DRAM frequency policy | Workload sensitivity to each device's performance | Device-specific devfreq/firmware limits; optional native governor where the driver permits replacement |
+| Shared power budgets | Marginal benefit of budgets across domains | RAPL/DTPM/powercap enforcement; budgets and time windows remain hardware-dependent |
+| Runtime PM and genpd decisions | Reuse intervals, autosuspend timing and useful domain-off residency | Driver suspend/resume sequencing, dependencies and latency constraints; provider/kernel integration for genpd policy |
+| Device/link power policy | Workload-dependent value of exposed power states | Storage/network/PCIe protocol and firmware constraints; per-driver support, not a universal PM hook |
+| System sleep/wake and charging policy | Optional prediction of user/workload demand | User intent, wakeup correctness and charger/battery protection; separate platform-specific work |
+| Display and peripheral idle policy | Optional prediction of user presence and next use | Desktop/display ownership, brightness choices and device lifecycle; existing rules remain a valid starting point |
+
+CPUIdle needs a new prediction target and labels; the existing thermal model
+does not predict the next idle interval. A native policy can use bounded
+in-kernel inference with slower model updates, but no such path is shipped.
+Modules may share telemetry, deployment infrastructure and thermal constraints,
+while learning separate performance, idle or device-response models. Reusing
+the current thermal coefficients does not supply those new predictions.
+
+Useful backend references include [runtime PM](https://docs.kernel.org/power/runtime_pm.html),
+[devfreq](https://docs.kernel.org/driver-api/devfreq.html),
+[interconnect](https://docs.kernel.org/driver-api/interconnect.html),
+[platform profiles](https://docs.kernel.org/userspace-api/sysfs-platform_profile.html),
+[system sleep](https://docs.kernel.org/admin-guide/pm/sleep-states.html) and
+[power supplies](https://docs.kernel.org/power/power_supply_class.html).
+Device autosuspend, NVMe APST, PCIe ASPM and system suspend are distinct
+decisions; a CPU resume-latency request does not control all of them.
+
+Delivery is incremental:
+
+1. **Native hardware-trial helper (implemented).** `deploy.sh` builds on the
+   target, checks capabilities and offers preview/run/restore/install/uninstall.
+   Its BPF-free binary avoids modern BPF-header requirements. Installation
+   only copies the daemon/helper; it does not activate control, change other
+   services or enable boot-time operation. `PREFIX`/`DESTDIR` support native
+   installation and inactive staging. No custom distro, kernel or init system
+   is needed for the foreground trial.
+2. **Lifecycle guards (implemented), wider delivery (future).** Controller/
+   restore locking, validated discovery, explicit sensor selection, strict CLI
+   validation, non-actuating dry-run and failure-preserving recovery are in
+   place. Linux file fixtures and shell-supervision tests exercise failure
+   paths without controlling host hardware. Distribution packages and optional
+   service integration remain separate future work. A service must preserve
+   recovery data and clean up abnormal exits; it must not activate unsupported
+   control merely because package installation succeeded.
+3. **Optional CPUFreq/devfreq policy add-ons.** Native loadable governors have
+   registration APIs, but require a compatible driver, kernel build/API and
+   permitted governor switching. A selected `userspace` governor can also
+   delegate target decisions to a daemon; that would be policy delegation,
+   not in-kernel inference. Neither route is current Lerwatt functionality.
+4. **CPUIdle/thermal/genpd kernel integration.** CPUIdle governors cannot be
+   unregistered and are not practical loadable modules; the current thermal
+   governor registration is internal boot-time code. Genpd governors are
+   selected by domain providers, not a generic runtime add-on registry. These
+   paths need an appropriate kernel/provider change or a supported future
+   extension. Supply optional kernel packages/patches rather than promising
+   that DKMS alone enables all policies.
+
+Primary interface references: [CPUIdle governor lifecycle](https://docs.kernel.org/driver-api/pm/cpuidle.html),
+[CPUFreq registration](https://github.com/torvalds/linux/blob/master/drivers/cpufreq/cpufreq.c),
+[devfreq registration and immutable-governor checks](https://github.com/torvalds/linux/blob/master/drivers/devfreq/devfreq.c),
+[thermal registration](https://github.com/torvalds/linux/blob/master/drivers/thermal/thermal_core.c)
+and [genpd policy](https://github.com/torvalds/linux/blob/master/drivers/pmdomain/governor.c).
+There is no promised generic BPF PM-governor backend in this delivery plan.
+Kernel add-ons need matching build information and supported APIs; DKMS does
+not supply missing hooks or a stable kernel ABI. Signing/trust requirements
+also depend on the installed kernel's policy. See [external modules](https://docs.kernel.org/kbuild/modules.html)
+and [module signing](https://docs.kernel.org/admin-guide/module-signing.html).
+
+Build/CI compatibility, simulated control correctness, physical-device
+compatibility and measured energy/latency improvement are separate claims.
+Publishing an installable package does not establish the last two.
+
+## 8. Hardware and measurement
 
 - **Primary board:** RK3588 (4× Cortex-A55 with `capacity-dmips-mhz` 530 and 4× Cortex-A76 with 1024 in the upstream device tree, three OPP tables, an Energy Model from `dynamic-power-coefficient`, cluster thermal zones). Linux drives voltage through `cpufreq-dt` and regulators, so the full OPP path is visible.
 - **Second platform (later):** a Qualcomm board with hardware DVFS and LMh throttling, to test firmware-owned voltage and `hw_pressure`.
 - **Energy:** an external meter on the board's input rail, sampled at 1 kHz or faster and time-aligned with traces. The Energy Model is an estimate, not a measurement.
 - **Thermal:** fixed ambient, fixed heatsink and fan setting, cool-down to a fixed start temperature before each run.
 
-## 8. Evaluation plan
+## 9. Evaluation plan
 
 | # | Scheduler | Power policy |
 | --- | --- | --- |
-| 1 | EEVDF | schedutil + EAS + kernel thermal governor |
+| 1 | EEVDF | schedutil + EAS where supported + kernel thermal governor |
 | 2 | Lertick | Kernel policies (schedutil reading Lertick's `cpuperf`) |
 | 3 | EEVDF | Lerwatt (ceilings, idle limits, budgets) |
-| 4 | Lertick | Lerwatt, contract disabled (no prices, no forecasts) |
+| 4 | Lertick | Lerwatt, contract disabled (no shared prices or latency-critical classification) |
 | 5 | Lertick | Lerwatt, contract enabled |
 
-scx_lavd in its powersave and autopilot modes is an additional baseline because it already combines core compaction with `cpuperf` control.
+Disabling the contract does not disable Lerwatt's thermal learning or point
+forecasts. Hold rule/MPC/point-forecast settings constant when isolating the
+contract's effect. scx_lavd in its powersave and autopilot modes is an
+additional baseline because it combines core compaction with `cpuperf` control.
 
 Metrics: throughput, p95/p99 latency, energy, energy-delay product, frequency transitions (`power:cpu_frequency` tracepoint), time above the passive trip, `hw_pressure` events, controller CPU time, contract-map traffic and oscillation (variance of ceilings under a constant load). Workloads: schbench and a request-response server for latency, a parallel build for throughput, a sustained CPU load for thermal saturation, and a mixed interactive plus background load. At least ten randomized repetitions per configuration, with confidence intervals.
 
-## 9. Prior work
+## 10. Prior work
 
 | Work | What it already shows |
 | --- | --- |

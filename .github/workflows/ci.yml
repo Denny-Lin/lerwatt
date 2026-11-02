@@ -10,7 +10,7 @@ jobs:
       fail-fast: false
       matrix:
         # The target is ARM64; x86_64 keeps the code portable.
-        os: [ubuntu-24.04-arm, ubuntu-24.04]
+        os: [ubuntu-22.04, ubuntu-24.04-arm, ubuntu-24.04]
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
@@ -20,3 +20,19 @@ jobs:
         run: make test
       - name: End to end (simulator + controller, restore, crash recovery)
         run: make e2e
+      - name: Native deployment and recovery fixtures
+        run: make test-deployment
+
+  musl-standalone:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build and test with musl and BusyBox sh
+        run: |
+          docker run --rm -v "$PWD:/source:ro" alpine:3.22 sh -ec '
+            apk add --no-cache build-base linux-headers python3 bash
+            mkdir /work
+            cp -R /source/Makefile /source/src /source/include /source/tests /source/deploy.sh /source/sim /work/
+            cd /work
+            make test-deployment
+          '

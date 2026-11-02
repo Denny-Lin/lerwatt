@@ -12,7 +12,7 @@
 
 #include "contract.h"
 
-#ifdef __linux__
+#if defined(__linux__) && !defined(LW_NO_BPF)
 #include <linux/bpf.h>
 #include <sys/mman.h>
 #include <sys/syscall.h>
@@ -127,7 +127,7 @@ void lw_contract_close(struct lw_contract *c)
 	c->lw_fd = c->lt_fd = -1;
 }
 
-#else /* !__linux__ */
+#else /* non-Linux or standalone build without Linux BPF headers */
 
 int lw_contract_open(struct lw_contract *c, bool want_write)
 {
@@ -143,7 +143,7 @@ void lw_contract_close(struct lw_contract *c)
 	c->lw_fd = c->lt_fd = -1;
 }
 
-#endif /* __linux__ */
+#endif
 
 void lw_contract_publish(struct lw_contract *c, unsigned int cluster,
 			 const struct lw_contract_rec *val)

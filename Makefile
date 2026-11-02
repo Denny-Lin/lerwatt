@@ -11,7 +11,15 @@ CC      ?= cc
 CFLAGS  ?= -O2 -g
 CFLAGS  += -std=c11 -D_GNU_SOURCE -Wall -Wextra -Wshadow -Werror -Iinclude -Isrc
 LDLIBS  += -lm
+ifeq ($(shell uname -s),Linux)
+# Older glibc exposes clock_gettime/clock_nanosleep through librt.
+LDLIBS  += -lrt
+endif
 BUILD   := build
+PREFIX  ?= /usr/local
+DESTDIR ?=
+VERSION ?= $(shell git describe --always --dirty 2>/dev/null || echo source)
+CPPFLAGS += -DLERWATT_VERSION=\"$(VERSION)\"
 
 HAL_SRCS := src/hal_fs.c src/hal_discover.c src/hal_sample.c src/hal_actuate.c
 CTL_SRCS := src/controller.c src/learn.c src/forecast.c src/temporal.c
@@ -24,7 +32,32 @@ $(BUILD):
 	mkdir -p $@
 
 $(BUILD)/lerwattd: $(D_SRCS) $(wildcard include/lerwatt/*.h src/*.h) | $(BUILD)
-	$(CC) $(CFLAGS) -o $@ $(D_SRCS) $(LDLIBS)
+	$(CC) $(CPPFLAGS) $(CFLAGS) -o $@ $(D_SRCS) $(LDLIBS)
+
+# Native hardware trials need no sched_ext or modern linux/bpf.h. Keep this a
+# separate target so a cached BPF-enabled binary cannot be installed by mistake.
+$(BUILD)/lerwattd-standalone: $(D_SRCS) $(wildcard include/lerwatt/*.h src/*.h) | $(BUILD)
+	$(CC) $(CPPFLAGS) $(CFLAGS) -DLW_NO_BPF -o $@ $(D_SRCS) $(LDLIBS)
+
+hardware: $(BUILD)/lerwattd-standalone
+
+$(BUILD)/test_runtime_fs: tests/test_runtime_fs.c src/hal_fs.c src/hal_actuate.c $(wildcard include/lerwatt/*.h src/*.h) | $(BUILD)
+	$(CC) $(CFLAGS) -o $@ tests/test_runtime_fs.c src/hal_fs.c src/hal_actuate.c $(LDLIBS)
+
+$(BUILD)/test_discovery: tests/test_discovery.c src/hal_discover.c src/hal_sample.c src/hal_fs.c $(wildcard include/lerwatt/*.h src/*.h) | $(BUILD)
+	$(CC) $(CFLAGS) -o $@ tests/test_discovery.c src/hal_discover.c src/hal_sample.c src/hal_fs.c $(LDLIBS)
+
+test-deployment: $(BUILD)/lerwattd-standalone $(BUILD)/test_runtime_fs $(BUILD)/test_discovery
+	$(BUILD)/test_runtime_fs
+	$(BUILD)/test_discovery
+	python3 tests/test_daemon_deployment.py $(BUILD)/lerwattd-standalone
+	sh tests/test_deploy.sh
+
+install:
+	PREFIX="$(PREFIX)" DESTDIR="$(DESTDIR)" ./deploy.sh install
+
+uninstall:
+	PREFIX="$(PREFIX)" DESTDIR="$(DESTDIR)" ./deploy.sh uninstall
 
 $(BUILD)/lerwatt-sim: $(SIM_SRCS) $(wildcard include/lerwatt/*.h src/*.h sim/*.h) | $(BUILD)
 	$(CC) $(CFLAGS) -Isim -o $@ $(SIM_SRCS) $(LDLIBS)
@@ -72,4 +105,4 @@ e2e: all
 clean:
 	rm -rf $(BUILD)
 
-.PHONY: all test e2e clean
+.PHONY: all hardware install uninstall test test-deployment e2e clean

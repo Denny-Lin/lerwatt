@@ -7,6 +7,7 @@
  * one it got.
  */
 #include <errno.h>
+#include <fcntl.h>
 #include <getopt.h>
 #include <limits.h>
 #include <math.h>
@@ -14,11 +15,19 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/stat.h>
+#include <sys/wait.h>
 #include <time.h>
+#include <unistd.h>
 
 #include "contract.h"
 #include "lerwatt/controller.h"
 #include "lerwatt/hal.h"
+#include "runtime.h"
+
+#ifndef LERWATT_VERSION
+#define LERWATT_VERSION "source"
+#endif
 
 /* Lertick runs are finite: look for a new run every second, drop a silent one after 2 s. */
 #define CONTRACT_RETRY_NS 1000000000ull
@@ -40,7 +49,7 @@ static void usage(FILE *out)
 		"  --period-ms N      control period, default 100\n"
 		"  --duration S       stop after S seconds (default: until SIGINT/SIGTERM)\n"
 		"  --soft-limit C     soft thermal limit in degC (default: lowest passive trip - 5)\n"
-		"  --telemetry FILE   append one JSON line per period (\"-\" = stdout)\n"
+		"  --telemetry FILE   create a new private JSON-lines file (\"-\" = stdout)\n"
 		"  --dry-run          decide and log, never write kernel knobs\n"
 		"  --no-contract      do not use the Lertick contract maps\n"
 		"  --policy rule|mpc  rule: PI budget (default); mpc: experimental learned\n"
@@ -48,16 +57,105 @@ static void usage(FILE *out)
 		"  --cross-cluster    jointly plan MPC ceilings (requires --policy mpc)\n"
 		"  --forecast temporal|adaptive  point forecast (default temporal; MPC only)\n"
 		"  --describe         print the discovered system and exit\n"
-		"  --restore          write back journaled original values and exit\n");
+		"  --check            check hardware capabilities without changing settings\n"
+		"  --temperature-sensor PATH  explicitly select a CPU/package sensor (millidegC)\n"
+		"  --version          print build version and exit\n"
+		"  --restore          write back journaled original values and exit\n"
+		"                     optional: -- /absolute/program args (hold recovery lock)\n");
+}
+
+/* Never append privileged telemetry to an existing file, symlink or device.
+ * O_EXCL also prevents a link replacement between checking and opening. */
+static FILE *open_telemetry(const char *path)
+{
+	int fd = open(path, O_WRONLY | O_CREAT | O_EXCL | O_NOFOLLOW |
+		      O_NONBLOCK | O_CLOEXEC, 0600);
+	FILE *out;
+
+	if (fd < 0)
+		return NULL;
+	out = fdopen(fd, "w");
+	if (!out) {
+		int saved = errno;
+
+		close(fd);
+		errno = saved;
+	}
+	return out;
+}
+
+/* Keep the same kernel lock across recovery and installation/removal. The
+ * child inherits it too, so killing only this supervisor cannot open a gap. */
+static int run_locked_command(int lock_fd, char **args)
+{
+	struct sigaction ignore = { .sa_handler = SIG_IGN };
+	struct sigaction normal = { .sa_handler = SIG_DFL };
+	pid_t child;
+	int status;
+
+	if (fcntl(lock_fd, F_SETFD, 0) < 0)
+		return 2;
+	sigaction(SIGINT, &ignore, NULL);
+	sigaction(SIGTERM, &ignore, NULL);
+	sigaction(SIGHUP, &ignore, NULL);
+	child = fork();
+	if (child < 0)
+		return 2;
+	if (!child) {
+		sigaction(SIGINT, &normal, NULL);
+		sigaction(SIGTERM, &normal, NULL);
+		sigaction(SIGHUP, &normal, NULL);
+		execv(args[0], args);
+		fprintf(stderr, "lerwatt: cannot execute maintenance command: %s\n", strerror(errno));
+		_exit(127);
+	}
+	while (waitpid(child, &status, 0) < 0)
+		if (errno != EINTR)
+			return 2;
+	return WIFEXITED(status) ? WEXITSTATUS(status) :
+		WIFSIGNALED(status) ? 128 + WTERMSIG(status) : 2;
+}
+
+static bool parse_period(const char *s, unsigned int *out)
+{
+	char *end;
+	unsigned long v;
+
+	if (!s[0] || s[0] == '-' || s[0] == '+')
+		return false;
+	errno = 0;
+	v = strtoul(s, &end, 10);
+	if (errno || *end || v < 10 || v > 10000)
+		return false;
+	*out = (unsigned int)v;
+	return true;
+}
+
+static bool parse_number(const char *s, double low, double high, double *out)
+{
+	char *end;
+	double v;
+
+	errno = 0;
+	v = strtod(s, &end);
+	if (errno || end == s || *end || !isfinite(v) || v < low || v > high)
+		return false;
+	*out = v;
+	return true;
 }
 
 static int32_t lowest_passive(const struct lw_system *sys)
 {
 	int32_t lo = INT32_MAX;
 
-	for (int z = 0; z < sys->nzones; z++)
-		if (sys->zones[z].passive_mc < lo)
+	for (int i = 0; i < sys->npolicies; i++) {
+		int z = sys->policies[i].zone;
+
+		if (z >= 0 && sys->zones[z].passive_mc < lo)
 			lo = sys->zones[z].passive_mc;
+	}
+	if (sys->package_zone >= 0 && sys->zones[sys->package_zone].passive_mc < lo)
+		lo = sys->zones[sys->package_zone].passive_mc;
 	return lo;
 }
 
@@ -68,21 +166,26 @@ static int32_t cluster_temp(const struct lw_system *sys, const struct lw_sample 
 
 	if (z >= 0)
 		return s->zone_mc[z];
-	for (z = 0; z < sys->nzones; z++)	/* unmapped: follow the hottest zone */
-		if (s->zone_mc[z] > t)
-			t = s->zone_mc[z];
+	/* An unrelated GPU/battery zone is not a CPU temperature fallback. */
+	if (sys->package_zone >= 0)
+		t = s->zone_mc[sys->package_zone];
 	return t;
 }
 
-static void sleep_until(uint64_t deadline_ns)
+static int sleep_until(uint64_t deadline_ns)
 {
 	struct timespec ts = {
 		.tv_sec = (time_t)(deadline_ns / 1000000000ull),
 		.tv_nsec = (long)(deadline_ns % 1000000000ull),
 	};
 
-	while (!stop && clock_nanosleep(CLOCK_MONOTONIC, TIMER_ABSTIME, &ts, NULL) == EINTR)
-		;
+	while (!stop) {
+		int error = clock_nanosleep(CLOCK_MONOTONIC, TIMER_ABSTIME, &ts, NULL);
+
+		if (error != EINTR)
+			return error;
+	}
+	return 0;
 }
 
 int main(int argc, char **argv)
@@ -99,18 +202,22 @@ int main(int argc, char **argv)
 		{ "cross-cluster", no_argument, NULL, 'G' },
 		{ "forecast", required_argument, NULL, 'F' },
 		{ "describe", no_argument, NULL, 'D' },
+		{ "check", no_argument, NULL, 'C' },
+		{ "temperature-sensor", required_argument, NULL, 'S' },
+		{ "version", no_argument, NULL, 'V' },
 		{ "restore", no_argument, NULL, 'R' },
 		{ "help", no_argument, NULL, 'h' },
 		{ 0 }
 	};
-	const char *sysroot = NULL, *telemetry = NULL;
+	const char *sysroot = NULL, *telemetry = NULL, *sensor_path = NULL;
 	unsigned int period_ms = 100;
 	double duration_s = 0, soft_c = 0;
 	bool dry_run = false, use_contract = true, describe = false, restore = false;
 	bool cross_cluster = false;
+	bool check = false, actuator_ready = false, started = false;
 	bool temporal_forecast = true;
 	static struct lw_system sys;
-	struct lw_ctl_state st[LW_MAX_POLICIES] = { 0 };
+	static struct lw_ctl_state st[LW_MAX_POLICIES];
 	struct lw_ctl_params params;
 	struct lw_contract contract;
 	struct lw_actuator act;
@@ -119,7 +226,9 @@ int main(int argc, char **argv)
 	char err[256];
 	FILE *tel = NULL;
 	uint64_t start_ns, next_ns, last_ns;
+	uint64_t duration_deadline_ns = 0;
 	int opt, ret = 0;
+	int lock_fd = -1;
 	bool have_contract = false;
 	uint64_t contract_next_try = 0;
 	enum lw_ctl_policy policy = LW_POLICY_RULE;
@@ -128,9 +237,24 @@ int main(int argc, char **argv)
 	while ((opt = getopt_long(argc, argv, "h", opts, NULL)) != -1) {
 		switch (opt) {
 		case 'r': sysroot = optarg; break;
-		case 'p': period_ms = (unsigned int)strtoul(optarg, NULL, 10); break;
-		case 'd': duration_s = strtod(optarg, NULL); break;
-		case 's': soft_c = strtod(optarg, NULL); break;
+		case 'p':
+			if (!parse_period(optarg, &period_ms)) {
+				fprintf(stderr, "lerwatt: --period-ms must be 10..10000\n");
+				return 1;
+			}
+			break;
+		case 'd':
+			if (!parse_number(optarg, 0, 31536000, &duration_s)) {
+				fprintf(stderr, "lerwatt: --duration must be a finite number in 0..31536000\n");
+				return 1;
+			}
+			break;
+		case 's':
+			if (!parse_number(optarg, 1, 200, &soft_c)) {
+				fprintf(stderr, "lerwatt: --soft-limit must be a finite number in 1..200\n");
+				return 1;
+			}
+			break;
 		case 't': telemetry = optarg; break;
 		case 'n': dry_run = true; break;
 		case 'c': use_contract = false; break;
@@ -150,10 +274,19 @@ int main(int argc, char **argv)
 			policy = strcmp(optarg, "mpc") ? LW_POLICY_RULE : LW_POLICY_MPC;
 			break;
 		case 'D': describe = true; break;
+		case 'C': check = true; break;
+		case 'S': sensor_path = optarg; break;
+		case 'V': printf("lerwattd %s\n", LERWATT_VERSION); return 0;
 		case 'R': restore = true; break;
 		case 'h': usage(stdout); return 0;
 		default: usage(stderr); return 1;
 		}
+	}
+	if ((optind != argc && (!restore || argv[optind][0] != '/')) ||
+	    (describe + check + restore) > 1 || (restore && dry_run)) {
+		fprintf(stderr, "lerwatt: unexpected arguments or incompatible inspection/restore options\n");
+		usage(stderr);
+		return 1;
 	}
 	if (period_ms < 10 || period_ms > 10000) {
 		fprintf(stderr, "lerwatt: --period-ms must be 10..10000\n");
@@ -163,27 +296,70 @@ int main(int argc, char **argv)
 		fprintf(stderr, "lerwatt: --cross-cluster requires --policy mpc\n");
 		return 1;
 	}
+	/* A preview never publishes control, even if Lertick maps already exist. */
+	if (dry_run)
+		use_contract = false;
+	if (check && !sysroot)
+		sysroot = "/";
 
 	if (lw_detect(&sys, sysroot, err, sizeof(err))) {
 		fprintf(stderr, "lerwatt: %s\n", err);
 		return 1;
 	}
+	if (!dry_run && !describe && !check) {
+		lock_fd = lw_instance_lock(&sys);
+		if (lock_fd < 0) {
+			fprintf(stderr, "lerwatt: cannot acquire controller/restore lock: %s\n",
+				strerror(-lock_fd));
+			return 2;
+		}
+	}
 	if (restore) {
 		ret = lw_journal_restore(&sys);
 		fprintf(stderr, "lerwatt: restore %s\n", ret ? "had failures" : "done");
+		if (!ret && optind < argc) {
+			ret = run_locked_command(lock_fd, argv + optind);
+			close(lock_fd);
+			return ret;
+		}
+		close(lock_fd);
 		return ret ? 2 : 0;
+	}
+	/* Never overwrite an unrecovered journal or capture its limits as originals. */
+	if (!dry_run && !describe && !check && lw_journal_restore(&sys)) {
+		fprintf(stderr, "lerwatt: previous settings could not be restored; refusing control\n");
+		ret = 2;
+		goto finish;
 	}
 	if (lw_discover(&sys, err, sizeof(err))) {
 		fprintf(stderr, "lerwatt: %s\n", err);
-		return 1;
+		ret = 1;
+		goto finish;
+	}
+	if (sensor_path && lw_select_temperature_sensor(&sys, sensor_path, err, sizeof(err))) {
+		fprintf(stderr, "lerwatt: %s\n", err);
+		ret = 1;
+		goto finish;
 	}
 	lw_describe(&sys, stderr);
 	if (describe)
 		return 0;
-
-	/* A journal left behind means the last run died: undo it first. */
-	if (!dry_run && lw_journal_restore(&sys))
-		fprintf(stderr, "lerwatt: warning: stale journal could not be fully restored\n");
+	if (lw_check_system(&sys, !dry_run, stderr)) {
+		ret = 1;
+		goto finish;
+	}
+	if (check) {
+		fprintf(stderr, "lerwatt: requested policy %s; thermal planning %s\n",
+			policy == LW_POLICY_MPC ? "mpc" : "rule",
+			policy == LW_POLICY_MPC ? (sys.package_zone >= 0 ?
+			"available after online learning" : "unavailable: rule fallback (no package sensor)") : "rule control");
+		return 0;
+	}
+	if (sys.npolicies > LW_CONTRACT_MAX_CLUSTERS && use_contract) {
+		fprintf(stderr, "lerwatt: %d policies exceed the Lertick contract capacity; running standalone\n",
+			sys.npolicies);
+		use_contract = false;
+	}
 
 	lw_ctl_default_params(&params, lowest_passive(&sys));
 	params.policy = policy;
@@ -198,8 +374,10 @@ int main(int argc, char **argv)
 
 	if (lw_actuator_init(&sys, &act, dry_run)) {
 		fprintf(stderr, "lerwatt: cannot create the restore journal\n");
-		return 1;
+		ret = 2;
+		goto finish;
 	}
+	actuator_ready = true;
 	memset(&contract, 0, sizeof(contract));
 	if (use_contract) {
 		int c = 0;
@@ -211,21 +389,52 @@ int main(int argc, char **argv)
 			have_contract ? "attached" : c == -ENOENT ? "absent (running alone)" :
 			strerror(-c));
 	}
-	if (telemetry)
-		tel = strcmp(telemetry, "-") ? fopen(telemetry, "a") : stdout;
+	if (telemetry) {
+		tel = strcmp(telemetry, "-") ? open_telemetry(telemetry) : stdout;
+		if (!tel) {
+			fprintf(stderr, "lerwatt: cannot open telemetry %s: %s\n", telemetry, strerror(errno));
+			ret = 2;
+			goto finish;
+		}
+	}
 
 	sa.sa_handler = on_signal;	/* no SA_RESTART: wake the sleep */
 	sigaction(SIGINT, &sa, NULL);
 	sigaction(SIGTERM, &sa, NULL);
+	sigaction(SIGHUP, &sa, NULL);
+	sa.sa_handler = SIG_IGN;
+	sigaction(SIGPIPE, &sa, NULL);
 
 	start_ns = last_ns = lw_now_ns();
+	if (duration_s > 0) {
+		uint64_t duration_ns = (uint64_t)(duration_s * 1e9);
+
+		duration_deadline_ns = duration_ns > UINT64_MAX - start_ns ?
+			UINT64_MAX : start_ns + duration_ns;
+	}
+	started = true;
 	next_ns = start_ns;
 	while (!stop) {
 		struct lw_sample s;
 		struct lw_actuation a = { 0 };
 		double dt;
 
-		lw_sample(&sys, &hist, &s);
+		if (duration_s > 0 && lw_now_ns() >= duration_deadline_ns)
+			break;
+		if (lw_sample(&sys, &hist, &s)) {
+			fprintf(stderr, "lerwatt: sampling failed; stopping and restoring settings\n");
+			ret = 2;
+			break;
+		}
+		bool temperatures_valid = true;
+		for (int i = 0; i < sys.npolicies; i++)
+			if (cluster_temp(&sys, &s, i) == INT32_MIN)
+				temperatures_valid = false;
+		if (!temperatures_valid) {
+			fprintf(stderr, "lerwatt: CPU temperature became unavailable; stopping and restoring settings\n");
+			ret = 2;
+			break;
+		}
 		dt = (s.t_ns - last_ns) / 1e9;
 		last_ns = s.t_ns;
 		if (use_contract) {
@@ -322,28 +531,49 @@ int main(int argc, char **argv)
 		}
 		if (tel) {
 			fprintf(tel, "]}\n");
-			fflush(tel);
+			if (fflush(tel) || ferror(tel)) {
+				fprintf(stderr, "lerwatt: telemetry write failed; stopping and restoring settings\n");
+				ret = 2;
+				break;
+			}
 		}
-		if (lw_actuate(&sys, &act, &a))
+		if (lw_actuate(&sys, &act, &a)) {
 			ret = 2;
+			break;
+		}
 
-		if (duration_s > 0 && (lw_now_ns() - start_ns) / 1e9 >= duration_s)
+		if (duration_s > 0 && lw_now_ns() >= duration_deadline_ns)
 			break;
 		next_ns += (uint64_t)period_ms * 1000000ull;
 		if (next_ns < lw_now_ns())	/* overran: skip, do not burst */
 			next_ns = lw_now_ns() + (uint64_t)period_ms * 1000000ull;
-		sleep_until(next_ns);
+		if (duration_s > 0 && next_ns > duration_deadline_ns)
+			next_ns = duration_deadline_ns;
+		int sleep_error = sleep_until(next_ns);
+
+		if (sleep_error) {
+			fprintf(stderr, "lerwatt: control sleep failed: %s; stopping and restoring settings\n",
+				strerror(sleep_error));
+			ret = 2;
+			break;
+		}
 	}
 
+finish:
 	if (have_contract)
 		lw_contract_close(&contract);
-	if (!dry_run && lw_journal_restore(&sys)) {
+	if (actuator_ready && !dry_run && lw_journal_restore(&sys)) {
 		fprintf(stderr, "lerwatt: restore had failures; run lerwattd --restore\n");
 		ret = 2;
 	}
-	fprintf(stderr, "lerwatt: stopped after %.1f s, %lu writes, %lu write errors\n",
-		(lw_now_ns() - start_ns) / 1e9, act.writes, act.write_errors);
-	if (tel && tel != stdout)
-		fclose(tel);
+	if (started)
+		fprintf(stderr, "lerwatt: stopped after %.1f s, %lu writes, %lu write errors\n",
+			(lw_now_ns() - start_ns) / 1e9, act.writes, act.write_errors);
+	if (tel && tel != stdout && fclose(tel)) {
+		fprintf(stderr, "lerwatt: telemetry close failed: %s\n", strerror(errno));
+		ret = 2;
+	}
+	if (lock_fd >= 0)
+		close(lock_fd);
 	return ret;
 }

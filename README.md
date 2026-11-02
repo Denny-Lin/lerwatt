@@ -1,99 +1,133 @@
-# Lerwatt — A Self-Learning Power Manager for Linux
+<h1 align="center">Lerwatt</h1>
 
-Lerwatt controls CPU frequency ceilings and idle-latency constraints through standard Linux interfaces. It learns a thermal model online, reports temperature forecasts, and can coordinate with the optional [Lertick](https://github.com/Denny-Lin/lertick) scheduler through shared BPF maps.
+<p align="center">AI-powered CPU power management. Built for your Linux.</p>
 
-[![CI](https://github.com/Denny-Lin/lerwatt/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/Denny-Lin/lerwatt/actions)
-[Simulation and results](docs/SIMULATION.md) · [Design](docs/DESIGN.md) · [Naming](docs/NAMING.md)
+<p align="center">
+  <a href="#get-started-on-ubuntu">Get started →</a> &nbsp;&nbsp;
+  <a href="#how-it-works">Explore Lerwatt →</a> &nbsp;&nbsp;
+  <a href="docs/USAGE.md">Read the guide →</a>
+</p>
 
-## What it does
+<p align="center">
+  <img src="docs/assets/lerwatt-overview.svg" alt="A little foresight for your Linux CPU. Lerwatt learns thermal behavior locally and plans CPU frequency ceilings, without a model download or reboot." width="1120" />
+</p>
 
-- Controls cluster frequency floors and ceilings using cpufreq, and idle latency using PM QoS.
-- Uses a rule controller by default, with an optional learned model-predictive controller (`--policy mpc`).
-- With `--policy mpc`, learns package heating, cooling and cluster hot-spot response while running; no offline training file is required.
-- Exposes a five-second temperature point forecast separately from the planner's thermal prediction.
-- Can search for a joint frequency allocation across clusters with `--policy mpc --cross-cluster`.
-- Saves original settings before changing them and restores them on exit or with `--restore` after a crash.
-- Runs independently of Lertick. With Lertick's `--lerwatt` flag, exchanges demand, ceilings and energy prices through real BPF maps.
+<p align="center">
+  <strong>Learns your machine.</strong> Builds a thermal model while it runs.<br />
+  <strong>Plans ahead.</strong> Uses that model to choose predictive CPU ceilings.<br />
+  <strong>Easy to try.</strong> Preview, run a finite trial, then restore your settings.
+</p>
 
-The first supported simulation profile is an ARM64 RK3588 with four A55 cores and two pairs of A76 cores. The controller itself uses Linux interfaces rather than platform-specific register access.
+<p align="center">
+  <a href="https://github.com/Denny-Lin/lerwatt/actions"><img src="https://github.com/Denny-Lin/lerwatt/actions/workflows/ci.yml/badge.svg?branch=main" alt="CI" /></a>
+  <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-86868b?style=flat-square" alt="MIT license" /></a>
+  <img src="https://img.shields.io/badge/hardware_trials-experimental-86868b?style=flat-square" alt="Experimental hardware trials" />
+</p>
 
-## Build
+<br />
 
-Use Linux with a C11 compiler and Make:
+## Get started on Ubuntu
+
+**Ubuntu 22.04 / 24.04 · native Linux · sudo access · no reboot**
+
+Use a normal user account. The helper builds locally and asks for sudo when needed.
+
+**1. Install the tools**
 
 ```sh
+sudo apt-get update
+sudo apt-get install --no-install-recommends git build-essential ca-certificates
 git clone https://github.com/Denny-Lin/lerwatt.git
 cd lerwatt
-make
-make test
-make e2e
+./deploy.sh install
 ```
 
-`lerwattd` and `lerwatt-sim` require Linux. The model, forecast, controller and closed-loop tests also run on macOS. No simulator object is linked into the daemon.
-
-## Try the simulated board
-
-In one Linux terminal, start the board. Eight vCPUs are needed to exercise all simulated CPUs with the default mapping:
+**2. Check your machine and preview**
 
 ```sh
-sudo build/lerwatt-sim --load procstat --cooling passive
+lerwatt check
+lerwatt preview --duration 60
 ```
 
-In another terminal, inspect it and start the controller:
+Continue after the hardware check passes. Preview leaves CPU control settings unchanged.
+
+**3. Start a five-minute trial**
 
 ```sh
-sudo build/lerwattd --describe
-sudo build/lerwattd --telemetry lerwatt.jsonl
+lerwatt run --duration 300
 ```
 
-The daemon discovers real cpufreq hardware first, then a running simulator at `$LERWATT_SIM_ROOT` or `/run/lerwatt-sim`. Use `--sysroot DIR` to select an explicit simulator tree. Stop the daemon with Ctrl-C before stopping the simulator so it can restore the knobs. A stopped simulator can restart at the same path without `--force`.
+Press **Ctrl-C** to stop early. The helper waits for the controller and attempts to restore the journaled settings. Installation does not start a service or enable control at boot.
 
-To use learned predictions, replace the daemon command with:
-
-```sh
-sudo build/lerwattd --policy mpc --telemetry lerwatt-mpc.jsonl
+```mermaid
+flowchart LR
+    A[Install] --> B{Check}
+    B -->|Pass| C[Preview]
+    B -->|Fail| D[Fix reported requirement]
+    C --> E[Foreground trial]
+    E --> F[Finish or Ctrl-C]
+    F --> G[Restore settings]
+    classDef default fill:#f5f5f7,stroke:#d2d2d7,color:#1d1d1f
+    linkStyle default stroke:#86868b,stroke-width:1.5px
 ```
 
-Optional joint planning:
+If recovery reports an error, keep the journal and tools, then retry with `lerwatt restore`. To remove Lerwatt after stopping the trial, run `lerwatt uninstall`.
 
-```sh
-sudo build/lerwattd --policy mpc --cross-cluster --telemetry lerwatt-joint.jsonl
+You can also run directly from the checkout with `./deploy.sh check`, `./deploy.sh preview` and `./deploy.sh run`. See the [full guide](docs/USAGE.md#deploy-on-your-own-linux-hardware) for sensor selection, telemetry and other Linux distributions.
+
+## How it works
+
+```mermaid
+flowchart LR
+    S[CPU temperature + load] --> M[Online thermal model]
+    M --> P[Plan CPU limits]
+    P --> K[Linux CPUFreq]
+    K --> C[Your CPU]
+    C --> S
+    S -.-> F[Five-second point forecast]
+    F -.-> T[Telemetry]
+    classDef default fill:#f5f5f7,stroke:#d2d2d7,color:#1d1d1f
+    classDef learned fill:#edf5ff,stroke:#a8c8ee,color:#1d1d1f
+    classDef linux fill:#f5f5f7,stroke:#d2d2d7,color:#1d1d1f
+    linkStyle default stroke:#86868b,stroke-width:1.5px
+    class M,P learned
+    class K,C linux
 ```
 
-MPC uses the rule controller while its model trains. It needs at least about 90 seconds of suitable observations; a hot start or insufficient load variation can take longer. Joint search requires trained models, package and cluster sensors, Energy Models and a bounded number of OPP combinations; otherwise independent control continues.
+The thermal model learns online; rule control covers warm-up and fallback. Models start fresh each launch, so preview does not pretrain a later run. Suitable learning observations usually take at least about 90 seconds.
 
-`forecast_c` is an expected temperature five seconds ahead, separate from the planner's `pred_c`. Its temporal correction learns only from completed forecasts and retains the reference when evidence is weak. `--forecast adaptive` selects the previous expert blend. Both point forecasters leave control decisions unchanged; `-1` means unavailable. See [accuracy, fallback and telemetry](results/point-model-observations/README.md).
+Linux continues handling frequency transitions, idle-state selection and thermal protection. Learned planning sets CPU frequency ceilings; frequency floors and PM QoS idle-latency constraints currently use rules. The separate five-second point forecast is reported in telemetry; it does not drive control decisions. [Architecture and expansion →](docs/DESIGN.md)
 
-On a real board, use the same daemon commands without starting the simulator. No real-board results have been recorded yet.
+## Tested Ubuntu versions
 
-## Use with Lertick
+| Version | Software environments tested | Result |
+| --- | --- | --- |
+| **22.04.5 LTS** | ARM64 and x86_64 containers | Build, deployment tests, user/sudo install, restore and uninstall passed |
+| **24.04.4 LTS** | ARM64 container | Same installation and deployment checks passed |
+| **24.04.5 LTS** | x86_64 container; ARM64 VM | Deployment checks passed; ARM64 also passed model/control and end-to-end tests |
 
-Build and start [Lertick](https://github.com/Denny-Lin/lertick) on the same Linux machine:
+x86_64 execution used emulation. These validate software and installation; physical-board behavior remains to be measured. [Exact environments and compatibility →](docs/USAGE.md#compatibility)
 
-```sh
-sudo build/scx_lertick --lerwatt --track-all --duration 120
-```
+**Hardware requirements:** usable CPUFreq controls and a CPU temperature input. Known multi-socket systems, offline CPUs in a discovered policy and some sensor/topology layouts are currently unsupported. `lerwatt check` reports missing capabilities. Keep kernel/firmware thermal protection enabled and check for competing power managers before a trial. [Requirements and limitations →](docs/USAGE.md#compatibility)
 
-Both controllers may start independently. The daemon retries when the contract is absent; Lertick ignores expired records. Three-cluster operation and standalone scheduler operation have been verified in an eight-vCPU ARM64 VM. See the [VM validation](https://github.com/Denny-Lin/lertick/blob/main/docs/LERWATT_VM_VALIDATION.md).
+## Results so far
 
-## Results and limits
+**Five-second forecast error: 1.47°C → 0.67°C mean absolute error.**
 
-The rule, independent MPC and joint MPC paths are tested at the same temperature settings. A shared raw-temperature guard reacts before filtered control, including during startup. All three keep the kernel's own passive and critical trips enabled.
+That is a **54.47% reduction** against Lerwatt's previous reference forecaster across six simulated daemon profiles, including fallback observations. A separate 192-run module study reduced mean forecast error by **28.95–29.51%**. The studies use different datasets and are reported separately.
 
-**The rule controller remains the default.** Joint MPC does not consistently improve both work served and frequency-ceiling stability. Forecast accuracy is workload-dependent. Delayed feedback reduces average hot-spot error on reserved simulator workloads, with small regressions in some cases; it does not universally beat persistence. See the [forecast evaluation](results/forecast-feedback/README.md). Full comparisons, regressions and reproduction commands are in [Simulation](docs/SIMULATION.md).
+Physical energy savings, battery life and throughput gains remain unmeasured. Predictive control remains experimental; its control trade-offs are evaluated separately from point-forecast accuracy.
 
-The ARM64 VM runs real Linux scheduling, daemon code and BPF maps. Frequencies, power and thermals are simulated; VM task latency does not represent the simulated board. These results do not establish hardware energy savings or production safety. Real-hardware calibration and measurement are still required.
+**[Daemon results and raw records](results/point-model-observations/runtime/README.md)** · **[Module study](results/point-model-observations/README.md)** · **[Control comparisons](docs/SIMULATION.md#4-control-and-forecast-results)**
 
-## Recovery
+## Go further
 
-After a controller crash, restore the journaled values against the same board or simulator root:
+| I want to… | Start here |
+| --- | --- |
+| Select a sensor, log telemetry or recover a trial | [Usage and recovery](docs/USAGE.md) |
+| Understand the AI model and deterministic limits | [Design](docs/DESIGN.md) |
+| Connect the optional Lertick scheduler | [Lertick integration](docs/USAGE.md#optional-lertick-integration) |
+| Reproduce the experiments or contribute | [Development](docs/USAGE.md#development-and-reproduction) · [Simulator](docs/SIMULATION.md) |
+| Share a hardware trial or report a problem | [Open an issue](https://github.com/Denny-Lin/lerwatt/issues) |
 
-```sh
-sudo build/lerwattd --restore
-```
-
-Lerwatt changes reversible cpufreq and PM QoS settings. It never writes voltages, raises thermal trip temperatures or disables thermal zones. If Lertick stops, Linux restores its default scheduler independently.
-
-## License
-
-Code and documents use the [MIT License](LICENSE).
+Lerwatt is **learning + watt**, pronounced **LER-watt**. [MIT licensed](LICENSE).

@@ -15,8 +15,8 @@
 #include <stdint.h>
 #include <stdio.h>
 
-#define LW_MAX_CPUS	64
-#define LW_MAX_POLICIES	8
+#define LW_MAX_CPUS	256
+#define LW_MAX_POLICIES	64
 #define LW_MAX_OPPS	32
 #define LW_MAX_ZONES	16
 #define LW_MAX_IDLE	8
@@ -46,6 +46,9 @@ struct lw_policy {
 	uint32_t capacity;	/* cpu_capacity of the policy's CPUs */
 	uint32_t cpuinfo_min_khz;
 	uint32_t cpuinfo_max_khz;
+	char driver[32];
+	char governor[32];
+	bool synthetic_opps;	/* frequency-limit candidates, not a hardware OPP table */
 	int nopps;
 	struct lw_opp opps[LW_MAX_OPPS];	/* ascending frequency */
 	bool have_em;
@@ -57,6 +60,7 @@ struct lw_policy {
 struct lw_zone {
 	int id;			/* N in thermal_zoneN */
 	char type[64];
+	char temp_path[LW_PATH_MAX]; /* resolved under sysroot; thermal or hwmon input */
 	int32_t passive_mc;	/* lowest passive trip, INT32_MAX if none */
 	int32_t critical_mc;	/* INT32_MAX if none */
 };
@@ -71,6 +75,8 @@ struct lw_system {
 	int nzones;
 	struct lw_zone zones[LW_MAX_ZONES];
 	int package_zone;	/* index into zones of the package sensor, -1 if none */
+	int npackages;		/* distinct known physical package IDs; 0 when unavailable */
+	bool sensor_ambiguous;	/* automatic package selection was deliberately withheld */
 	char meter_path[LW_PATH_MAX];	/* hwmon power1_input, "" if none */
 	char meter_name[64];
 };
@@ -114,6 +120,11 @@ int lw_journal_restore(const struct lw_system *sys);	/* write back and remove */
  */
 int lw_detect(struct lw_system *sys, const char *explicit_root, char *err, size_t errlen);
 int lw_discover(struct lw_system *sys, char *err, size_t errlen);
+/* Explicit absolute /sys/... input in millidegrees Celsius, under sysroot. */
+int lw_select_temperature_sensor(struct lw_system *sys, const char *path,
+				 char *err, size_t errlen);
+/* Inspect required inputs and optionally open control files writable; never writes. */
+int lw_check_system(const struct lw_system *sys, bool writable, FILE *out);
 void lw_describe(const struct lw_system *sys, FILE *out);
 
 /* ---- hal_sample.c ---- */
@@ -128,9 +139,10 @@ struct lw_actuation {
 	int32_t resume_latency_us[LW_MAX_POLICIES]; /* <0 = no constraint from Lerwatt */
 };
 /*
- * Lerwatt only tightens what it found: the effective ceiling is
+ * Lerwatt never raises the original ceiling: the effective ceiling is
  * min(decision, original scaling_max_freq), the floor is
- * max(decision, original scaling_min_freq), and "no constraint" means
+ * min(effective ceiling, max(decision, original scaling_min_freq)). A thermal
+ * cap can therefore lower an existing minimum. "No constraint" means
  * "put the original value back". Originals are read once at start.
  */
 struct lw_actuator {
